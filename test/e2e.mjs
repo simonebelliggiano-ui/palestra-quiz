@@ -148,7 +148,7 @@ for (let i = 0; i < 3; i++) {
   if (i === 0) await foto(tel.page, '13-ripasso-risposta');
   await tel.page.locator('[data-a="vota"][data-v="2"]').click();
   carteViste.push(fronte);
-  await tel.page.waitForTimeout(50);
+  await tel.page.waitForTimeout(350);
 }
 await clic(tel.page, 'fermaFlash');
 await foto(tel.page, '14-ripasso-fine');
@@ -291,6 +291,7 @@ ok(/Consegnare adesso/.test(await tel.page.locator('.foglio').textContent()), 'c
 await foto(tel.page, '23-sim-conferma');
 await clic(tel.page, 'consegna');
 await tel.page.waitForSelector('.punteggio');
+await tel.page.waitForFunction(() => /^19,77/.test(document.querySelector('.punteggio')?.textContent || ''), null, { timeout: 3000 });
 const punteggio = (await tel.page.locator('.punteggio').textContent()).trim();
 ok(punteggio.startsWith('19,77'), `punteggio 34×0,60 − 9×0,07 = ${punteggio}`);
 ok(/Sopra l'idoneità \(18\)/.test(await tel.page.locator('.centro').first().textContent()), 'sopra idoneità 18');
@@ -352,6 +353,46 @@ await foto(tel.page, '28-sim-esito-avviso');
 await clic(tel.page, 'chiudiRun');
 scrivi('carte/o.json', salvaO);
 
+console.log('\n6b. Barra a goccia');
+await tel.page.goto(`${BASE}#oggi`);
+await tel.page.waitForTimeout(600);
+const scatola = async (n) => tel.page.locator(`#nav a[data-k="${n}"]`).boundingBox();
+const gocciaX = () => tel.page.evaluate(() => { const r = document.querySelector('.goccia').getBoundingClientRect(); return r.left + r.width / 2; });
+const centro = (b) => b.x + b.width / 2;
+let bo = await scatola('oggi'), br = await scatola('risultati'), bm = await scatola('mazzi');
+ok(Math.abs(await gocciaX() - centro(bo)) < 2, 'la goccia parte su Oggi');
+await tel.page.mouse.move(centro(bo), bo.y + 20);
+await tel.page.mouse.down();
+for (let i = 1; i <= 10; i++) { await tel.page.mouse.move(centro(bo) + ((centro(br) - centro(bo)) * i) / 10, bo.y + 20); await tel.page.waitForTimeout(20); }
+const lungaMoto = await tel.page.evaluate(() => document.querySelector('.goccia').style.transform);
+await foto(tel.page, '40-goccia-trascinata');
+ok(Math.abs(await gocciaX() - centro(br)) < 60, `trascinata col dito segue la mano (${lungaMoto})`);
+await tel.page.mouse.up();
+await tel.page.waitForFunction(() => location.hash === '#risultati', null, { timeout: 2000 });
+await tel.page.waitForTimeout(900);
+ok(Math.abs(await gocciaX() - centro(br)) < 2, 'rilasciata si posa su Risultati e cambia schermata');
+ok(await tel.page.locator('#nav a[data-k="risultati"]').getAttribute('aria-current') === 'page', 'la voce attiva è segnata');
+await tel.page.evaluate(() => { window.__max = 1; const g = document.querySelector('.goccia'); const f = () => { const m = g.style.transform.match(/scale\(([\d.]+),/); if (m) window.__max = Math.max(window.__max, Number(m[1])); window.__raf = requestAnimationFrame(f); }; f(); });
+await tel.page.mouse.click(centro(bm), bm.y + 20);
+await tel.page.waitForFunction(() => location.hash === '#mazzi', null, { timeout: 2000 });
+await tel.page.waitForTimeout(900);
+const inVolo = await tel.page.evaluate(() => { cancelAnimationFrame(window.__raf); return window.__max; });
+ok(inVolo > 1.12, `in corsa si allunga come una goccia (fino a ${inVolo})`);
+ok(Math.abs(await gocciaX() - centro(bm)) < 2, 'un tocco semplice la porta sulla voce');
+await tel.page.locator('#nav a[data-k="oggi"]').focus();
+await tel.page.keyboard.press('Enter');
+await tel.page.waitForFunction(() => location.hash === '#oggi', null, { timeout: 2000 });
+ok(true, 'funziona anche da tastiera');
+await tel.page.evaluate(() => { location.hash = 'ripasso'; });
+await tel.page.waitForTimeout(600);
+ok(await tel.page.locator('#nav').evaluate((n) => n.classList.contains('fuori') && n.hasAttribute('inert')), 'durante le sessioni la barra scivola via');
+await tel.page.evaluate(() => { location.hash = 'oggi'; });
+await tel.page.waitForTimeout(300);
+// In simulazione nessuna vibrazione o animazione deve tradire la risposta giusta.
+const codice = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+const simPick = codice.slice(codice.indexOf('simPick(el)'), codice.indexOf('simPrec()'));
+ok(!/vibra\.(ok|no)/.test(simPick) && !/answer/.test(simPick), 'in simulazione la vibrazione non rivela mai se è giusta');
+
 console.log('\n7. Quiz, risultati, mazzi');
 await sincronizza(tel.page);
 await tel.page.goto(`${BASE}#quiz`);
@@ -359,6 +400,7 @@ await foto(tel.page, '16-quiz-scelta');
 await clic(tel.page, 'tuttiMazzi');
 await clic(tel.page, 'iniziaQuiz');
 await tel.page.locator('.opz').nth(2).click();
+await tel.page.waitForTimeout(600);
 await foto(tel.page, '17-quiz-correzione');
 await senzaSforamenti(tel.page, 'Quiz');
 await clic(tel.page, 'qzAvanti');
@@ -417,6 +459,15 @@ await sincronizza(pc.page);
 ok(JSON.stringify((await stato(tel.page)).progress) === JSON.stringify((await stato(pc.page)).progress), 'dopo tutto, PC e telefono ancora identici');
 await foto(pc.page, '31-pc-gestione');
 await pc.page.goto(`${BASE}#oggi`); await foto(pc.page, '32-pc-oggi');
+
+console.log('\n8b. Senza animazioni, per chi le disattiva');
+const quieto = await dispositivo(browser, 'quieto', { ...iPhone16, reducedMotion: 'reduce' });
+await collega(quieto.page);
+await quieto.page.goto(`${BASE}#quiz`);
+await clic(quieto.page, 'iniziaQuiz');
+await quieto.page.locator('.opz').first().click();
+ok(await quieto.page.locator('.perche').evaluate((e) => getComputedStyle(e).animationName === 'none'), 'con "riduci movimento" le animazioni si spengono');
+await quieto.ctx.close();
 
 console.log('\n9. Offline vero e installazione');
 const off = await browser.newContext({ ...iPhone16 });

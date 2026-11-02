@@ -4,13 +4,14 @@ import {
   inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, fmt, fmtMin, mmss,
 } from './core.js';
 import { Archivio, kvGet, kvSet, kvDel } from './store.js';
+import { BarraLiquida, vibra, impostaVibrazioni, uscita, rimbalzo, contaFino, fermo } from './moto.js';
 
-const VERSIONE = '1.0';
+const VERSIONE = '1.1';
 const REPO_DEFAULT = 'simonebelliggiano-ui/palestra-quiz-dati';
 const NOME = 'Simone';
 
 const A = new Archivio();
-const S = { decks: {}, cards: {}, progress: {}, sessions: [], run: null, prefs: {}, ui: {}, tick: null };
+const S = { decks: {}, cards: {}, progress: {}, sessions: [], run: null, prefs: {}, ui: { seg: {} }, tick: null, fx: null };
 const app = document.getElementById('app'), nav = document.getElementById('nav'), toastEl = document.getElementById('toast');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -78,6 +79,8 @@ const salvaRun = () => (S.run ? kvSet('run', S.run) : kvDel('run'));
 
 // ---------- percorso ----------
 const VISTE = {};
+const NAV_K = ['oggi', 'mazzi', 'risultati', 'gestione'];
+const barraNav = new BarraLiquida(nav, NAV.map(([k, t, p]) => [k, t, svgNav(p)]), (nome, cambia) => { if (cambia) vai(nome); });
 function vai(h) { if (location.hash === `#${h}`) route(); else location.hash = h; }
 function route() {
   const h = (location.hash || '#oggi').slice(1);
@@ -85,15 +88,47 @@ function route() {
   if (S.run && !S.run.finished && !['oggi'].includes(h) && h !== S.run.view) { location.hash = S.run.view; return; }
   const nome = VISTE[h] ? h : 'oggi';
   const principale = NAV.some(([k]) => k === nome);
-  nav.hidden = !principale;
-  nav.innerHTML = NAV.map(([k, t, p]) => `<a href="#${k}" ${k === nome ? 'aria-current="page"' : ''}>${svgNav(p)}${t}</a>`).join('');
   app.classList.toggle('sessione', !principale);
-  const y = S.ui.vista === nome ? window.scrollY : 0;
+  const prima = S.ui.vista, y = prima === nome ? window.scrollY : 0;
+  // L'effetto d'ingresso dipende da dove si arriva. Un ridisegno sulla stessa schermata resta fermo.
+  if (!S.fx && prima !== nome) {
+    const a = NAV_K.indexOf(prima), b = NAV_K.indexOf(nome);
+    S.fx = a >= 0 && b >= 0 ? (b > a ? 'tab-d' : 'tab-s') : 'apri';
+  }
   S.ui.vista = nome;
   VISTE[nome]();
+  barraNav.imposta(nome, principale);
+  dopoRender();
   window.scrollTo(0, y);
 }
-window.addEventListener('hashchange', route);
+// Piccoli movimenti che servono solo a far sentire viva l'interfaccia.
+function dopoRender() {
+  const fx = fermo() ? '' : S.fx || '';
+  S.fx = null;
+  if (app.dataset.fx !== fx) app.dataset.fx = fx;
+  // Pillola dei selettori a segmenti: parte dalla posizione precedente e scivola su quella nuova.
+  document.querySelectorAll('.segmenti').forEach((seg) => {
+    const bs = [...seg.querySelectorAll('button')], i = bs.findIndex((b) => b.getAttribute('aria-pressed') === 'true');
+    const chiave = bs[0]?.dataset.a;
+    if (i < 0 || !chiave) return;
+    const t = document.createElement('i');
+    t.className = 'seg-goccia';
+    t.style.setProperty('--n', bs.length);
+    const da = S.ui.seg[chiave] ?? i;
+    t.style.transform = `translateX(${da * 100}%)`;
+    seg.prepend(t);
+    S.ui.seg[chiave] = i;
+    if (da !== i && !fermo()) { t.getBoundingClientRect(); t.style.transform = `translateX(${i * 100}%)`; } else t.style.transform = `translateX(${i * 100}%)`;
+  });
+  if (S.ui.ultimo) {
+    let el = null;
+    try { el = app.querySelector(S.ui.ultimo); } catch { /* selettore non valido: nessun rimbalzo */ }
+    if (el?.matches('.chip, .formato, .segnata, [data-a="segna"]')) rimbalzo(el);
+    if (el?.matches('[data-a="passo"]')) rimbalzo(el.closest('.stepper')?.querySelector('b'), 0.8);
+    S.ui.ultimo = null;
+  }
+  if (fx === 'esito') app.querySelectorAll('[data-conta]').forEach((el) => contaFino(el, el.textContent));
+}
 const mostra = (html) => { app.innerHTML = html; };
 
 // ---------- pezzi riusati ----------
@@ -388,6 +423,8 @@ async function finisciSim(tempoScaduto) {
   await registra(eventi);
   salvaRun();
   A.sincronizza();
+  if (pz.passed) vibra.ok(); else vibra.no();
+  S.fx = 'esito';
   location.hash = 'simulazione';
   route();
 }
@@ -397,7 +434,7 @@ function esitoSim() {
   const salvata = A.collegato() && !A.pending.length && A.stato.fase === 'ok';
   mostra(`${testaSessione('Esito simulazione', 'chiudiRun')}
     <div class="centro">
-      <div class="punteggio">${p.right === 1 ? r.score : fmt(r.score)}<small> / ${p.max}</small></div>
+      <div class="punteggio"><span data-conta="${r.score}" data-dec="${p.right === 1 ? 0 : 2}">${p.right === 1 ? r.score : fmt(r.score)}</span><small> / ${p.max}</small></div>
       <span class="pill ${passato ? 'ok' : 'bad'}" style="font-size:14px;line-height:20px">${passato ? ic.ok() : ic.no}${passato ? 'Sopra' : 'Sotto'} l'idoneità (${p.pass % 1 ? fmt(p.pass) : p.pass})</span>
       ${r.tempoScaduto ? '<span class="pill warn">Tempo scaduto</span>' : ''}
       <div class="meta num" style="color:var(--ink2);margin-top:2px">${formula}</div>
@@ -518,6 +555,7 @@ VISTE.gestione = () => {
       <button class="azione" style="min-height:48px;font-size:15px" data-a="salvaSync">${A.collegato() ? 'Sincronizza ora' : 'Collega e sincronizza'}</button>
     </section>
     <section class="card elenco">
+      <button class="voce" role="switch" aria-checked="${S.prefs.vibra !== false}" data-a="vibrazioni">Vibrazioni<span class="interruttore" aria-hidden="true"><i></i></span></button>
       ${blocco('import', 'Importa carte da JSON', false, `<label class="campo">Incolla il JSON<textarea id="g-json" spellcheck="false" placeholder='{"decks":[...],"cards":[...]}'></textarea></label><button class="azione piccola" data-a="importa">Importa</button><span class="meta" id="g-esito"></span><p class="meta">Le carte con lo stesso id vengono sovrascritte: così si correggono. Serve la connessione.</p>`)}
       ${blocco('export', 'Esporta il backup', false, `<p class="meta">Mazzi, carte, progressi e sessioni in un file JSON.</p><div class="scorciatoie"><button class="azione tenue piccola" data-a="esporta">Salva il file</button><button class="azione tenue piccola" data-a="esportaCopia">Copia</button></div>`)}
       ${blocco('azzera', 'Azzera i progressi di un mazzo', true, `<p class="meta">Le carte restano, tornano nuove. Le sessioni passate restano.</p><select id="g-azz" class="selezione">${opzioniMazzi}</select><button class="azione pericolo piccola" data-a="azzera">${S.ui.confAzz ? `Sì, azzera ${esc(deckName(S.ui.confAzz))}` : 'Azzera'}</button>`)}
@@ -586,17 +624,30 @@ const AZ = {
     S.run = { view: 'ripasso', kind: 'flash', queue: shuffle(pool).slice(0, S.prefs.flN || 30).map((c) => c.id), i: 0, shown: false, pick: null, answers: [], started: Date.now(), decks: sel, finished: false };
     salvaRun(); route();
   },
-  mostraRisposta() { S.run.shown = true; salvaRun(); route(); },
-  flPick(el) { S.run.pick = Number(el.dataset.v); S.run.shown = true; salvaRun(); route(); },
+  async mostraRisposta() {
+    S.run.shown = true; salvaRun();
+    await uscita('.carta', 'gira-via', 130, app);
+    S.fx = 'gira-entra'; route();
+  },
+  flPick(el) {
+    const r = S.run, c = S.cards[r.queue[r.i]];
+    r.pick = Number(el.dataset.v); r.shown = true; salvaRun();
+    if (r.pick === c?.answer) vibra.ok(); else vibra.no();
+    S.fx = 'rivela'; route();
+  },
   async vota(el) {
     const r = S.run, g = Number(el.dataset.v), c = S.cards[r.queue[r.i]];
     if (r.occupato) return; // un doppio tocco non deve contare due volte
     r.occupato = true;
+    if (g === 2) vibra.ok(); else if (g === 0) vibra.no(); else vibra.tocco();
+    // Prima si salva la risposta, poi parte l'animazione.
     await registra(eventoVoto(c, g, 'flash'));
-    r.occupato = false;
     r.answers.push({ c: c.id, g, ok: g > 0, pick: r.pick });
     r.i++; r.shown = false; r.pick = null;
-    salvaRun(); syncPresto(); window.scrollTo(0, 0); route();
+    salvaRun(); syncPresto();
+    await uscita('.carta', g === 0 ? 'via-s' : g === 2 ? 'via-d' : 'via-su', 190, app);
+    r.occupato = false;
+    S.fx = 'carta-entra'; window.scrollTo(0, 0); route();
   },
   fermaFlash() { S.run.queue = S.run.queue.slice(0, S.run.i); fineFlash(); },
   chiudiRun() { S.run = null; salvaRun(); clearInterval(S.tick); vai('oggi'); },
@@ -611,10 +662,11 @@ const AZ = {
     if (r.pick !== null) return;
     const c = S.cards[r.queue[r.i]], pick = Number(el.dataset.v), ok = pick === c.answer;
     r.pick = pick; r.answers.push({ c: c.id, pick, ok });
+    if (ok) vibra.ok(); else vibra.no();
     await registra(eventoVoto(c, ok ? 2 : 0, 'quiz'));
-    salvaRun(); syncPresto(); route();
+    salvaRun(); syncPresto(); S.fx = 'rivela'; route();
   },
-  qzAvanti() { const r = S.run; r.i++; r.pick = null; salvaRun(); window.scrollTo(0, 0); route(); },
+  qzAvanti() { const r = S.run; r.i++; r.pick = null; salvaRun(); S.fx = 'q-d'; window.scrollTo(0, 0); route(); },
   fermaQuiz() { const r = S.run; r.queue = r.queue.slice(0, r.i + (r.pick !== null ? 1 : 0)); r.i = r.queue.length; fineQuiz(); },
   copiaErroriRun() {
     const r = S.run, errate = r.answers.filter((a) => !a.ok).map((a) => S.cards[a.c]).filter(Boolean);
@@ -640,20 +692,27 @@ const AZ = {
     const r = S.run, id = r.queue[r.i];
     r.picks[id] = Number(el.dataset.v);
     salvaRun(); route();
-    if (r.i < r.queue.length - 1) setTimeout(() => { if (S.run === r && r.queue[r.i] === id) { r.i++; salvaRun(); window.scrollTo(0, 0); route(); } }, 220);
+    if (r.i < r.queue.length - 1) setTimeout(() => { if (S.run === r && r.queue[r.i] === id) { r.i++; salvaRun(); S.fx = 'q-d'; window.scrollTo(0, 0); route(); } }, 220);
   },
-  simPrec() { S.run.i = Math.max(0, S.run.i - 1); salvaRun(); window.scrollTo(0, 0); route(); },
+  simPrec() { S.run.i = Math.max(0, S.run.i - 1); salvaRun(); S.fx = 'q-s'; window.scrollTo(0, 0); route(); },
   simSucc() {
     const r = S.run;
-    if (r.i >= r.queue.length - 1) { r.sheet = true; route(); return; }
-    r.i++; salvaRun(); window.scrollTo(0, 0); route();
+    if (r.i >= r.queue.length - 1) { r.sheet = true; S.fx = 'foglio'; route(); return; }
+    r.i++; salvaRun(); S.fx = 'q-d'; window.scrollTo(0, 0); route();
   },
   simBianco() { const r = S.run; delete r.picks[r.queue[r.i]]; AZ.simSucc(); },
   segna() { const r = S.run, id = r.queue[r.i]; r.flags[id] = !r.flags[id]; salvaRun(); route(); },
-  apriGriglia() { S.run.sheet = true; S.run.conferma = false; S.run.confermaAbb = false; route(); },
-  chiudiGriglia() { S.run.sheet = false; S.run.conferma = false; S.run.confermaAbb = false; route(); },
-  simVai(el) { const r = S.run; r.i = Number(el.dataset.v); r.sheet = false; r.conferma = false; salvaRun(); window.scrollTo(0, 0); route(); },
-  consegna() { const r = S.run; if (!r.conferma) { r.conferma = true; route(); return; } finisciSim(false); },
+  apriGriglia() { S.run.sheet = true; S.run.conferma = false; S.run.confermaAbb = false; S.fx = 'foglio'; route(); },
+  async chiudiGriglia() {
+    await uscita('.foglio', 'via', 190, app);
+    S.run.sheet = false; S.run.conferma = false; S.run.confermaAbb = false; route();
+  },
+  async simVai(el) {
+    const r = S.run, i = Number(el.dataset.v);
+    await uscita('.foglio', 'via', 170, app);
+    r.i = i; r.sheet = false; r.conferma = false; salvaRun(); S.fx = 'q-d'; window.scrollTo(0, 0); route();
+  },
+  consegna() { const r = S.run; if (!r.conferma) { r.conferma = true; vibra.no(); route(); return; } finisciSim(false); },
   abbandona() {
     const r = S.run;
     if (!r.confermaAbb) { r.confermaAbb = true; route(); return; }
@@ -666,6 +725,7 @@ const AZ = {
     copia(testoErrori(sbagliate, r.results), 'Copiato: incollalo nella chat di correzione');
   },
   nulla() {},
+  vibrazioni() { S.prefs.vibra = S.prefs.vibra === false; impostaVibrazioni(S.prefs.vibra); salvaPrefs(); if (S.prefs.vibra) vibra.ok(); route(); },
   risPreset(el) { S.ui.risPreset = el.dataset.v; S.ui.punto = null; route(); },
   punto(el) { S.ui.punto = Number(el.dataset.v); route(); },
   copiaFregano() {
@@ -730,10 +790,15 @@ const AZ = {
   },
 };
 document.addEventListener('click', (ev) => {
-  const el = ev.target.closest('[data-a]');
+  const el = ev.target.closest('[data-a], a.tile, a.azione');
   if (!el || el.disabled) return;
-  const f = AZ[el.dataset.a];
-  if (f) f(el);
+  const az = el.dataset.a;
+  // Queste azioni hanno una vibrazione propria; in simulazione nulla rivela se la risposta è giusta.
+  if (!['vota', 'qzPick', 'flPick', 'consegna', 'vibrazioni'].includes(az)) vibra.tocco();
+  if (az) {
+    S.ui.ultimo = `[data-a="${CSS.escape(az)}"]${el.dataset.v != null ? `[data-v="${CSS.escape(el.dataset.v)}"]` : ''}${el.dataset.k != null ? `[data-k="${CSS.escape(el.dataset.k)}"]` : ''}`;
+    if (AZ[az]) AZ[az](el);
+  }
 });
 
 // ---------- avvio ----------
@@ -753,9 +818,13 @@ A.onChange = (cambiato) => {
 (async () => {
   await A.carica();
   S.prefs = (await kvGet('prefs')) || {};
+  impostaVibrazioni(S.prefs.vibra !== false);
+  document.addEventListener('touchstart', () => {}, { passive: true }); // su iPhone attiva lo stato "premuto" dei bottoni
   S.run = await kvGet('run');
   ricalcola();
   if (S.run && S.run.view === 'simulazione' && !S.run.finished) avviaTick();
+  // Si ascolta l'indirizzo solo a dati caricati: prima, un ridisegno cancellerebbe quello che stai scrivendo.
+  window.addEventListener('hashchange', route);
   route();
   if (A.collegato() && navigator.onLine) A.sincronizza();
   document.addEventListener('visibilitychange', () => {
