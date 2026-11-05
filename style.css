@@ -134,7 +134,7 @@ h2 { font-size: 15px; line-height: 20px; font-weight: 700; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 14px; font-size: 12px; line-height: 16px; font-weight: 700; }
 .pill.ok { background: var(--ok-bg); color: var(--ok); } .pill.bad { background: var(--bad-bg); color: var(--bad); } .pill.warn { background: var(--warn-bg); color: var(--warn); } .pill.neutra { background: var(--blue-soft); color: var(--blue-ink); }
 .fronte { font-size: 27px; line-height: 36px; font-weight: 700; letter-spacing: -.3px; text-wrap: pretty; overflow-wrap: anywhere; }
-.fronte.numero { font-size: 88px; line-height: 96px; font-weight: 800; letter-spacing: 2px; text-align: center; font-variant-numeric: tabular-nums; }
+.fronte.numero { font-size: clamp(64px, 21vw, 88px); line-height: 1.1; font-weight: 800; letter-spacing: 2px; text-align: center; white-space: pre-wrap; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
 .fronte.lunga { font-size: 21px; line-height: 30px; }
 .domanda-su { font-size: 16px; line-height: 23px; font-weight: 500; color: var(--ink2); overflow-wrap: anywhere; }
 .domanda-su.numero { font-size: 32px; line-height: 38px; font-weight: 800; color: var(--ink); }

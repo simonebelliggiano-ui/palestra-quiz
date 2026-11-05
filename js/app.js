@@ -6,7 +6,7 @@ import {
 import { Archivio, kvGet, kvSet, kvDel } from './store.js';
 import { BarraLiquida, vibra, impostaVibrazioni, uscita, rimbalzo, contaFino, fermo } from './moto.js';
 
-const VERSIONE = '1.1';
+const VERSIONE = '1.2';
 const REPO_DEFAULT = 'simonebelliggiano-ui/palestra-quiz-dati';
 const NOME = 'Simone';
 
@@ -231,7 +231,7 @@ VISTE.ripasso = () => {
     <div class="piede"><button class="azione" data-a="iniziaFlash" data-v="${modo}">Inizia</button></div>`);
 };
 function corpoFronte(c, reveal, pick) {
-  const numero = /^\d{1,3}$/.test(String(c.front).trim());
+  const numero = /^\d{1,3}( \d{1,3})?$/.test(String(c.front).trim()); // un numero, o una coppia come 01 51
   const trap = c.tags?.includes('trappola') ? '<span class="pill warn">trappola</span>' : '';
   const testa = `<div class="mazzo">${esc(deckName(c.deck))}${trap}</div>`;
   const opzioni = c.kind === 'quiz' ? `<div class="opzioni">${(c.options || []).map((o, i) => opzione(c, o, i, reveal, pick, 'flPick')).join('')}</div>` : '';
