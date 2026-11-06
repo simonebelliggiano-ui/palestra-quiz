@@ -272,3 +272,49 @@ export function validaCarte(data, mazziNoti = []) {
 export const fmt = (n, d = 2) => (Math.round(n * 100) / 100).toFixed(d).replace('.', ',');
 export const fmtMin = (n) => (Number.isInteger(n) ? String(n) : fmt(n)); // 1 e 0, ma 0,60 e 0,07
 export const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+// ---------- allenamento "Scrivi a memoria" sul codice fonetico ----------
+export const LIMITE_MS = 2000; // barra facoltativa: la soglia di lavoro, non un dato scientifico
+export const ESITAZIONE_MS = 3000; // oltre questo, anche senza barra, conta come esitazione
+
+// Accenti, maiuscole e spazi non contano: "tè" = "te", "Città" = "citta".
+export const normalizza = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Dalla carta ricava numero, parola e senso. Ritorna null se la carta non è di questo allenamento.
+export function coppiaDaCarta(c) {
+  if (!c?.tags) return null;
+  if (c.kind === 'flash' && c.tags.includes('numero-parola')) return { numero: String(c.front), parola: c.back, senso: 'np' };
+  if (c.kind === 'quiz' && c.tags.includes('parola-numero')) {
+    const m = String(c.front).match(/"(.+)"/);
+    return m ? { numero: String(c.options[c.answer]), parola: m[1], senso: 'pn' } : null;
+  }
+  return null;
+}
+
+// Prima le carte in scadenza, poi le nuove, poi le altre.
+export function scegliScrittura(carte, senso, progress, oggi, n, rnd = Math.random) {
+  const pool = carte.filter((c) => { const p = coppiaDaCarta(c); return p && (senso === 'misto' || p.senso === senso); });
+  const peso = (c) => (inScadenza(c, progress, oggi) ? 0 : maiVista(c, progress) ? 1 : 2);
+  return shuffle(pool, rnd).sort((a, b) => peso(a) - peso(b)).slice(0, n);
+}
+
+export function votoScrittura(ok, ms, conTempo) {
+  if (!ok) return 0;
+  return conTempo && ms > LIMITE_MS ? 1 : 2;
+}
+
+// Parole sbagliate o esitate più di 3 volte: la regola del rodaggio. Decide sempre Simone.
+export function paroleDifficili(eventi, cards) {
+  const conti = new Map();
+  for (const e of eventi) {
+    if (e.t !== 'v') continue;
+    const c = cards[e.c], p = coppiaDaCarta(c);
+    if (!p) continue;
+    if (e.g === 0 || (e.k === 'scrivi' && e.ms > ESITAZIONE_MS)) {
+      const r = conti.get(p.numero) || { numero: p.numero, parola: p.parola, volte: 0 };
+      r.volte++;
+      conti.set(p.numero, r);
+    }
+  }
+  return [...conti.values()].filter((r) => r.volte > 3).sort((a, b) => b.volte - a.volte);
+}

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   PRESETS, preparaSimulazione, calcolaPunteggio, ricostruisci, unisciEventi, applicaVoto, romeDate, addDays,
   ripartisci, validaCarte, eventiInTesto, testoInEventi, percorsoRegistro, materiaKey, prossimoRitorno,
+  normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili,
 } from '../js/core.js';
 
 const MAT = { o: 'Ordinamento dell\'Agenzia delle Entrate', d: 'Diritto amministrativo', p: 'Pubblico impiego', i: 'Informatica', e: 'Inglese', s: 'ASMEL specifiche', c: 'ASMEL comuni', m: 'Metodo' };
@@ -127,4 +128,39 @@ test('Controllo del JSON delle carte', () => {
   assert.ok(ko.errori.length >= 4);
   assert.equal(materiaKey("Ordinamento dell'Agenzia delle Entrate"), 'ordinamento');
   assert.equal(materiaKey('ASMEL'), 'asmelComuni');
+});
+const fl = (n, p, d = 'cf') => ({ id: `${d}-${n}`, deck: d, kind: 'flash', front: n, back: p, tags: ['numero-parola'] });
+const qz = (n, p, d = 'cf') => ({ id: `${d}-q${n}`, deck: d, kind: 'quiz', front: `Che numero è "${p}"?`, options: ['14', n, '42', '40'], answer: 1, tags: ['parola-numero'] });
+test('Scrivere: accenti e maiuscole non contano, le lettere sì', () => {
+  assert.equal(normalizza('Tè'), normalizza('te'));
+  assert.equal(normalizza(' Città '), 'citta');
+  assert.equal(normalizza('falò'), normalizza('FALO'));
+  assert.notEqual(normalizza('mucca'), normalizza('muca'));
+  assert.equal(normalizza('37'), '37');
+});
+test('Scrivere: le coppie si ricavano solo dalle carte giuste', () => {
+  assert.deepEqual(coppiaDaCarta(fl('41', 'ruota')), { numero: '41', parola: 'ruota', senso: 'np' });
+  assert.deepEqual(coppiaDaCarta(qz('41', 'ruota')), { numero: '41', parola: 'ruota', senso: 'pn' });
+  assert.equal(coppiaDaCarta({ kind: 'flash', front: '01 51', back: 'x', tags: ['storie'] }), null);
+  assert.equal(coppiaDaCarta({ kind: 'quiz', front: 'x' }), null);
+});
+test('Scrivere: prima in scadenza, poi nuove, poi le altre; il senso filtra', () => {
+  const carte = [fl('10', 'a'), fl('11', 'b'), fl('12', 'c'), qz('13', 'd')];
+  const progress = { 'cf-10': { box: 2, due: '2026-12-01' }, 'cf-12': { box: 1, due: '2026-11-01' } };
+  assert.deepEqual(scegliScrittura(carte, 'np', progress, '2026-11-06', 10).map((c) => c.id), ['cf-12', 'cf-11', 'cf-10']);
+  assert.deepEqual(scegliScrittura(carte, 'pn', progress, '2026-11-06', 10).map((c) => c.id), ['cf-q13']);
+  assert.equal(scegliScrittura(carte, 'misto', progress, '2026-11-06', 2).length, 2);
+});
+test('Scrivere: il voto dipende dal tempo solo se la barra è attiva', () => {
+  assert.equal(votoScrittura(false, 100, true), 0);
+  assert.equal(votoScrittura(true, 2500, true), 1);
+  assert.equal(votoScrittura(true, 1500, true), 2);
+  assert.equal(votoScrittura(true, 9000, false), 2);
+});
+test('Scrivere: rodaggio, più di 3 errori o esitazioni sommati nei due sensi', () => {
+  const cards = { 'cf-37': fl('37', 'mucca'), 'cf-q37': qz('37', 'mucca'), 'cf-40': fl('40', 'razzo') };
+  const v = (c, g, ms, k = 'scrivi') => ({ t: 'v', c, g, ms, k });
+  const ev = [v('cf-37', 0), v('cf-q37', 0), v('cf-37', 2, 4000), v('cf-q37', 2, 1000), v('cf-40', 0), v('cf-40', 0), v('cf-40', 0)];
+  assert.deepEqual(paroleDifficili(ev, cards), []);
+  assert.deepEqual(paroleDifficili([...ev, v('cf-37', 0, 0, 'flash')], cards), [{ numero: '37', parola: 'mucca', volte: 4 }]);
 });

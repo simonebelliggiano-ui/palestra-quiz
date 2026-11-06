@@ -67,7 +67,12 @@ for (const [id, materia, n] of MAZZI) {
   if (id === 'm') cards.push({ id: 'm-f02', deck: 'm', kind: 'flash', front: '41', back: 'R + T/D', tags: [] });
   scrivi(`carte/${id}.json`, JSON.stringify({ decks: [{ id, name: `Mazzo ${materia}`, materia, desc: 'Descrizione del mazzo', order: id.charCodeAt(0) }], cards }, null, 1));
 }
-const totaleCarte = MAZZI.reduce((a, m) => a + m[2] + 1, 0) + 1;
+const SC_PAROLE = [['41', 'ruota'], ['37', 'mucca'], ['78', 'caffè']];
+scrivi('carte/cf-parole.json', JSON.stringify({ decks: [{ id: 'cf-parole', name: 'Parole di prova', materia: 'Metodo', order: 200 }], cards: SC_PAROLE.flatMap(([n, p]) => [
+  { id: `cf-parole-${n}`, deck: 'cf-parole', kind: 'flash', front: n, back: p, why: 'promemoria', tags: ['numero-parola'] },
+  { id: `cf-parole-q${n}`, deck: 'cf-parole', kind: 'quiz', front: `Che numero è "${p}"?`, options: ['14', n, '42', '40'], answer: 1, tags: ['parola-numero'] },
+]) }));
+const totaleCarte = MAZZI.reduce((a, m) => a + m[2] + 1, 0) + 1 + SC_PAROLE.length * 2;
 
 // ---------- aiuti ----------
 let esiti = 0, falliti = 0;
@@ -392,6 +397,91 @@ await tel.page.waitForTimeout(300);
 const codice = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
 const simPick = codice.slice(codice.indexOf('simPick(el)'), codice.indexOf('simPrec()'));
 ok(!/vibra\.(ok|no)/.test(simPick) && !/answer/.test(simPick), 'in simulazione la vibrazione non rivela mai se è giusta');
+
+console.log('\n6c. Scrivi a memoria');
+await sincronizza(tel.page);
+await tel.page.goto(`${BASE}#oggi`);
+await tel.page.waitForTimeout(300);
+ok((await tel.page.locator('a.riga-azione').count()) === 1, 'su Oggi c\'è la voce Scrivi a memoria');
+await tel.page.locator('a.riga-azione').click();
+await tel.page.waitForSelector('[data-a="iniziaScrivi"]');
+await foto(tel.page, '50-scrivi-scelta');
+await senzaSforamenti(tel.page, 'Scrivi scelta');
+ok((await tel.page.locator('[data-a="toggleMazzo"]').count()) === 1, 'si scelgono solo i mazzi delle parole');
+await clic(tel.page, 'iniziaScrivi');
+await tel.page.waitForSelector('#sc-in');
+ok(await tel.page.evaluate(() => document.activeElement?.id === 'sc-in'), 'il campo è già pronto per scrivere');
+const parole = Object.fromEntries(SC_PAROLE);
+const domanda = () => tel.page.locator('#sc-domanda').textContent();
+await foto(tel.page, '51-scrivi-carta');
+// Prima carta: giusta, passa da sola appena scritta, accenti ignorati.
+const n1 = await domanda();
+await tel.page.waitForTimeout(250);
+await tel.page.locator('#sc-in').pressSequentially(parole[n1].replace('è', 'e').toUpperCase(), { delay: 25 });
+await tel.page.waitForFunction((v) => document.querySelector('#sc-domanda').textContent !== v, n1, { timeout: 2000 });
+ok(true, `giusta senza accento né maiuscole: passa da sola (${n1})`);
+// Seconda carta: sbagliata, si vede la risposta, e si va avanti solo riscrivendola.
+const n2 = await domanda();
+await tel.page.locator('#sc-in').fill('sbagliato');
+await tel.page.keyboard.press('Enter');
+await tel.page.waitForSelector('.sc-esito .perche');
+ok((await tel.page.locator('.sc-esito .perche .t').textContent()).includes(parole[n2]), 'sbagliata: mostra la parola giusta');
+await foto(tel.page, '52-scrivi-sbagliata');
+ok(await tel.page.evaluate(() => document.activeElement?.id === 'sc-in'), 'dopo l\'errore il campo resta pronto');
+await tel.page.locator('#sc-in').fill('ancora no');
+await tel.page.keyboard.press('Enter');
+await tel.page.waitForTimeout(150);
+ok((await domanda()) === n2, 'se la riscrivi male resta lì');
+await tel.page.locator('#sc-in').fill(parole[n2]);
+await tel.page.waitForFunction((v) => document.querySelector('#sc-domanda').textContent !== v, n2, { timeout: 2000 });
+ok(true, 'riscritta giusta: si va avanti');
+// Terza carta: non lo so, poi riscrittura. Poi torna la seconda, perché era sbagliata.
+const n3 = await domanda();
+await clic(tel.page, 'scNonSo');
+await tel.page.waitForSelector('.sc-esito .perche');
+await tel.page.locator('#sc-in').fill(parole[n3]);
+await tel.page.waitForFunction((v) => document.querySelector('#sc-domanda').textContent !== v, n3, { timeout: 2000 });
+const n4 = await domanda();
+ok(n4 === n2, `le sbagliate tornano nella stessa sessione (${n4})`);
+await tel.page.locator('#sc-in').fill(parole[n4]);
+await tel.page.waitForFunction((v) => document.querySelector('#sc-domanda')?.textContent !== v, n4, { timeout: 2000 });
+await tel.page.locator('#sc-in').fill(parole[n3]);
+await tel.page.waitForSelector('[data-a="chiudiRun"]', { timeout: 2000 });
+await tel.page.waitForTimeout(500);
+await foto(tel.page, '53-scrivi-fine');
+let stT = await stato(tel.page);
+const sess = stT.sessions.find((x) => x.kind === 'scrivi');
+ok(sess && sess.total === 3 && sess.right === 1 && sess.wrong === 2, `conta solo il primo tentativo: ${sess?.right} giusta su ${sess?.total}`);
+ok(stT.progress[`cf-parole-${n2}`]?.box === 0 && stT.progress[`cf-parole-${n2}`]?.lapses === 1, 'la riscrittura non cancella l\'errore nel ripasso');
+ok(stT.progress[`cf-parole-${n1}`]?.box === 1, 'la giusta sale di scatola');
+ok(sess.answers.every((a) => a.ms >= 0), 'tempo registrato');
+await clic(tel.page, 'chiudiRun');
+// Parola → numero e barra del tempo.
+await tel.page.goto(`${BASE}#scrivi`);
+await tel.page.locator('[data-a="scSenso"][data-v="pn"]').click();
+await clic(tel.page, 'scTempo');
+await clic(tel.page, 'iniziaScrivi');
+await tel.page.waitForSelector('#sc-in');
+ok((await tel.page.locator('#sc-in').getAttribute('inputmode')) === 'numeric', 'parola → numero: tastierino numerico');
+ok(await tel.page.locator('#sc-barra').isVisible(), 'con il tempo si vede la barra');
+await foto(tel.page, '54-scrivi-numero');
+await tel.page.waitForTimeout(2300);
+const parolaPn = await domanda();
+const numeroPn = SC_PAROLE.find(([, p]) => p === parolaPn)[0];
+await tel.page.locator('#sc-in').pressSequentially(numeroPn, { delay: 20 });
+await tel.page.waitForSelector('.sc-bene');
+ok(/lenta/.test(await tel.page.locator('.sc-bene').textContent()), 'oltre i 2 secondi: giusta ma lenta');
+stT = await stato(tel.page);
+ok(stT.progress[`cf-parole-q${numeroPn}`]?.last === 1, 'lenta vale come Difficile');
+await tel.page.waitForTimeout(1000);
+await clic(tel.page, 'fermaScrivi');
+await tel.page.waitForTimeout(200);
+await clic(tel.page, 'chiudiRun');
+await sincronizza(tel.page);
+ok([...GH.files].some(([p, f]) => p.includes(idT) && /"k":"scrivi"/.test(f.testo) && /"ms":\d+/.test(f.testo)), 'risposte e tempi arrivano nel repository');
+await tel.page.goto(`${BASE}#mazzi`);
+await tel.page.waitForTimeout(300);
+ok((await tel.page.locator('[data-a="mazzoScrivi"]').count()) === 1, 'in Mazzi c\'è Scrivi solo sui mazzi delle parole');
 
 console.log('\n7. Quiz, risultati, mazzi');
 await sincronizza(tel.page);

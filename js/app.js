@@ -2,11 +2,12 @@
 import {
   PRESETS, MATERIE, ORDINE_MATERIE, romeDate, materiaKey, preparaSimulazione, calcolaPunteggio, ricostruisci,
   inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, fmt, fmtMin, mmss,
+  normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili, LIMITE_MS,
 } from './core.js';
 import { Archivio, kvGet, kvSet, kvDel } from './store.js';
 import { BarraLiquida, vibra, impostaVibrazioni, uscita, rimbalzo, contaFino, fermo } from './moto.js';
 
-const VERSIONE = '1.2';
+const VERSIONE = '1.3';
 const REPO_DEFAULT = 'simonebelliggiano-ui/palestra-quiz-dati';
 const NOME = 'Simone';
 
@@ -70,7 +71,7 @@ function syncPresto(ms = 15000) {
   clearTimeout(syncT);
   syncT = setTimeout(() => { if (navigator.onLine) A.sincronizza(); }, ms);
 }
-function eventoVoto(c, g, k, at = new Date().toISOString()) { return { id: A.nuovoId(), t: 'v', at, c: c.id, d: c.deck, g, k }; }
+function eventoVoto(c, g, k, at = new Date().toISOString(), ms) { return { id: A.nuovoId(), t: 'v', at, c: c.id, d: c.deck, g, k, ...(ms != null ? { ms } : {}) }; }
 async function registra(eventi) {
   await A.aggiungi(eventi);
   ({ progress: S.progress, sessions: S.sessions } = ricostruisci(A.eventi()));
@@ -170,7 +171,8 @@ VISTE.oggi = () => {
     return barra(m, `${ok} su ${cs.length} · ${du} oggi`, cs.length ? (ok / cs.length) * 100 : 0);
   }).join('');
   const inCorso = S.run && !S.run.finished;
-  const nomiRun = { flash: 'il ripasso', quiz: 'il quiz', sim: 'la simulazione' };
+  const nomiRun = { flash: 'il ripasso', quiz: 'il quiz', sim: 'la simulazione', scrivi: "l'allenamento" };
+  const haScrivi = all.some((c) => coppiaDaCarta(c));
   mostra(`
     <div class="centro"><div class="saluto">${ic.cap}${saluto}, ${NOME}</div><h1>${titolo}</h1></div>
     ${bannerSync()}
@@ -182,6 +184,7 @@ VISTE.oggi = () => {
       <a class="tile blu" href="#simulazione"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><rect x="9.500" y="1.500" width="5" height="3" rx="1.500" fill="#C9781A"/><circle cx="12" cy="14" r="9" fill="#C9781A"/><path d="M12 9v5l3 2" fill="none" stroke="#fff" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Simulazione</b><span class="num">${PRESETS.ade.n} domande in ${PRESETS.ade.min} min</span></span></a>
       <a class="tile marrone" href="#quiz" data-a="tileQuiz" data-v="weak"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#D4497A"/><circle cx="12" cy="12" r="5.500" fill="#fff"/><circle cx="12" cy="12" r="2.500" fill="#D4497A"/></svg><span><b>Errori</b><span>prima le più sbagliate</span></span></a>
     </div>
+    ${haScrivi ? `<a class="riga-azione" href="#scrivi"><span><b>Scrivi a memoria</b><span>Vedi il numero, scrivi la parola</span></span>${ic.dx()}</a>` : ''}
     <div class="tre">
       <div><b>${nuove}</b><small>mai viste</small></div>
       <div><b>${tot ? `${Math.round((giuste / tot) * 100)}%` : '–'}</b><small>giuste in 7 giorni</small></div>
@@ -201,7 +204,7 @@ VISTE.mazzi = () => {
       ${dk.desc ? `<div class="meta">${esc(dk.desc)}</div>` : ''}
       <div class="meta num">${cs.length} carte · ${q} quiz · ${nw} nuove · ${du} oggi · ${ok} consolidate</div>
       <div class="barra"><i style="width:${cs.length ? Math.round((ok / cs.length) * 100) : 0}%"></i></div>
-      <div class="scorciatoie"><button class="azione tenue piccola" data-a="mazzoRipassa" data-v="${esc(dk.id)}">Ripassa</button><button class="azione tenue piccola" data-a="mazzoQuiz" data-v="${esc(dk.id)}" ${q ? '' : 'disabled'}>Quiz</button></div></article>`;
+      <div class="scorciatoie ${cs.some((c) => coppiaDaCarta(c)) ? 'tre-bottoni' : ''}"><button class="azione tenue piccola" data-a="mazzoRipassa" data-v="${esc(dk.id)}">Ripassa</button><button class="azione tenue piccola" data-a="mazzoQuiz" data-v="${esc(dk.id)}" ${q ? '' : 'disabled'}>Quiz</button>${cs.some((c) => coppiaDaCarta(c)) ? `<button class="azione tenue piccola" data-a="mazzoScrivi" data-v="${esc(dk.id)}">Scrivi</button>` : ''}</div></article>`;
   };
   mostra(`<h1>Mazzi</h1><p class="sotto">${plur(tutte().length, 'carta', 'carte')}, un mazzo per argomento</p>
     ${mat.length ? `<div class="chips scorre"><button class="chip" data-a="filtroMazzi" data-v="" aria-pressed="${!filtro}">Tutti</button>${mat.map((m) => `<button class="chip" data-a="filtroMazzi" data-v="${esc(m)}" aria-pressed="${filtro === m}">${esc(m)}</button>`).join('')}</div>` : ''}
@@ -209,9 +212,9 @@ VISTE.mazzi = () => {
 };
 
 // ---------- scelta mazzi per ripasso e quiz ----------
-function sceltaMazzi(chiave) {
+function sceltaMazzi(chiave, lista = deckList()) {
   const sel = S.prefs[chiave] || [];
-  return `<h2 class="etichetta">Da quali mazzi</h2><div class="chips"><button class="chip" data-a="tuttiMazzi" data-v="${chiave}" aria-pressed="${!sel.length}">Tutti</button>${deckList().map((d) => `<button class="chip" data-a="toggleMazzo" data-k="${chiave}" data-v="${esc(d.id)}" aria-pressed="${sel.includes(d.id)}">${esc(d.name)}</button>`).join('')}</div>`;
+  return `<h2 class="etichetta">Da quali mazzi</h2><div class="chips"><button class="chip" data-a="tuttiMazzi" data-v="${chiave}" aria-pressed="${!sel.length}">Tutti</button>${lista.map((d) => `<button class="chip" data-a="toggleMazzo" data-k="${chiave}" data-v="${esc(d.id)}" aria-pressed="${sel.includes(d.id)}">${esc(d.name)}</button>`).join('')}</div>`;
 }
 const stepper = (k, val, testo) => `<div class="card stepper"><h2>${testo}</h2><div><button class="tondo" data-a="passo" data-k="${k}" data-v="-5" aria-label="Meno 5"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3C4454" stroke-width="3" stroke-linecap="round"><path d="M5 12h14"/></svg></button><b>${val}</b><button class="tondo" data-a="passo" data-k="${k}" data-v="5" aria-label="Più 5"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3C4454" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div></div>`;
 
@@ -474,6 +477,146 @@ async function copia(testo, msg) {
   try { await navigator.clipboard.writeText(testo); toast(msg); } catch { toast('Copia non riuscita su questo dispositivo'); }
 }
 
+// ---------- SCRIVI A MEMORIA ----------
+const mazziScrittura = () => { const ids = new Set(tutte().filter((c) => coppiaDaCarta(c)).map((c) => c.deck)); return deckList().filter((d) => ids.has(d.id)); };
+VISTE.scrivi = () => {
+  if (S.run?.view === 'scrivi') return S.run.finished ? fineScrivi() : schermoScrivi();
+  const senso = S.prefs.scSenso || 'np', n = S.prefs.scN || 20, conTempo = !!S.prefs.scTempo;
+  const lista = mazziScrittura(), sel = (S.prefs.scDecks || []).filter((id) => lista.some((d) => d.id === id));
+  const pool = scegliScrittura(carteDi(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), 1e6);
+  const dure = paroleDifficili(A.eventi(), S.cards);
+  mostra(`${testaSessione('Scrivi a memoria', 'home')}
+    <h1>La scrivi, ti entra</h1>
+    <p class="sotto">Se sbagli vedi la risposta e la riscrivi. L'app corregge da sola.</p>
+    <div class="segmenti" role="group" aria-label="Senso">${pulsanteSegmento('scSenso', 'np', senso === 'np', 'Numero → parola')}${pulsanteSegmento('scSenso', 'pn', senso === 'pn', 'Parola → numero')}${pulsanteSegmento('scSenso', 'misto', senso === 'misto', 'Misto')}</div>
+    ${stepper('scN', n, 'Quante')}
+    <section class="card elenco"><button class="voce" role="switch" aria-checked="${conTempo}" data-a="scTempo"><span>Con il tempo<br><span class="meta">Barra di 2 secondi fino alla prima lettera</span></span><span class="interruttore" aria-hidden="true"><i></i></span></button></section>
+    ${dure.length ? `<div class="avviso">${ic.att}<span>Da valutare nel rodaggio, sbagliate o esitate più di 3 volte: ${dure.slice(0, 8).map((d) => `${esc(d.numero)} ${esc(d.parola)}`).join(', ')}.</span></div>` : ''}
+    ${sceltaMazzi('scDecks', lista)}
+    <div class="piede"><button class="azione" data-a="iniziaScrivi" ${pool.length ? '' : 'disabled'}>${pool.length ? 'Inizia' : 'Nessuna carta disponibile'}</button></div>`);
+};
+const SC = { t0: 0, t1: 0, rifai: false, fermo: false };
+const voceScrivi = () => {
+  const r = S.run, it = r.queue[r.i], c = it && S.cards[it], p = coppiaDaCarta(c);
+  if (!p) return null;
+  return { c, p, domanda: p.senso === 'np' ? p.numero : p.parola, giusta: p.senso === 'np' ? p.parola : p.numero };
+};
+function schermoScrivi() {
+  const r = S.run;
+  while (r.i < r.queue.length && !voceScrivi()) r.i++;
+  if (r.i >= r.queue.length) return fineScrivi();
+  // Il campo resta lo stesso per tutta la sessione: così su iPhone la tastiera non si chiude tra una carta e l'altra.
+  mostra(`${testaSessione('', 'fermaScrivi', 0)}
+    <article class="carta sc-carta"><div class="mazzo" id="sc-mazzo"></div><p class="sc-domanda" id="sc-domanda" aria-live="polite"></p><div class="sc-barra" id="sc-barra" ${r.conTempo ? '' : 'hidden'}><i></i></div></article>
+    <label class="campo"><span class="sc-etichetta" id="sc-etichetta"></span><input id="sc-in" class="sc-in" type="text" ${r.senso === 'pn' ? 'inputmode="numeric"' : ''} autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go"></label>
+    <div id="sc-esito" class="sc-esito" role="status"></div>
+    <div class="scorciatoie"><button class="azione tenue piccola" id="sc-nonso" data-a="scNonSo">Non lo so</button><button class="azione piccola" data-a="scControlla">Controlla</button></div>`);
+  caricaScrivi();
+  document.getElementById('sc-in').focus({ preventScroll: true });
+}
+function caricaScrivi() {
+  const r = S.run, v = voceScrivi();
+  if (!v) { r.i++; if (r.i >= r.queue.length) { vai('scrivi'); route(); return; } caricaScrivi(); return; }
+  Object.assign(SC, { t0: performance.now(), t1: 0, rifai: false, fermo: false });
+  app.querySelector('.titolo').textContent = `${r.i + 1} di ${r.queue.length}`;
+  app.querySelector('.progresso i').style.width = `${(r.i / r.queue.length) * 100}%`;
+  document.getElementById('sc-mazzo').textContent = deckName(v.c.deck);
+  const d = document.getElementById('sc-domanda');
+  d.textContent = v.domanda;
+  d.classList.toggle('numero', v.p.senso === 'np');
+  rimbalzo(d, 0.9);
+  document.getElementById('sc-etichetta').textContent = v.p.senso === 'np' ? 'Scrivi la parola' : 'Scrivi il numero';
+  document.getElementById('sc-esito').innerHTML = '';
+  document.getElementById('sc-nonso').hidden = false;
+  const i = document.getElementById('sc-in');
+  i.value = ''; i.classList.remove('ok', 'no');
+  const barra = document.querySelector('#sc-barra i');
+  if (r.conTempo && barra) {
+    barra.getAnimations().forEach((a) => a.cancel());
+    barra.parentElement.classList.remove('finita');
+    if (!fermo()) barra.animate([{ scale: '1 1' }, { scale: '0 1' }], { duration: LIMITE_MS, easing: 'linear', fill: 'forwards' }).onfinish = () => barra.parentElement.classList.add('finita');
+  }
+}
+const prossimaScrivi = () => {
+  const r = S.run;
+  r.i++; salvaRun();
+  if (r.i >= r.queue.length) { route(); return; }
+  caricaScrivi();
+};
+async function esitoScrivi(ok, risposta) {
+  const r = S.run, v = voceScrivi();
+  if (!v || SC.fermo) return;
+  const i = document.getElementById('sc-in'), box = document.getElementById('sc-esito');
+  // Stai riscrivendo una risposta che hai appena visto: qui non si vota più, si ripete.
+  if (SC.rifai) {
+    if (!ok) { i.classList.remove('no'); void i.offsetWidth; i.classList.add('no'); vibra.tocco(); return; }
+    SC.fermo = true; i.classList.remove('no'); i.classList.add('ok'); vibra.tocco();
+    setTimeout(prossimaScrivi, 300);
+    return;
+  }
+  const ms = Math.round((SC.t1 || performance.now()) - SC.t0);
+  const primaVolta = !r.fatte[v.c.id];
+  const lenta = ok && r.conTempo && ms > LIMITE_MS;
+  r.fatte[v.c.id] = (r.fatte[v.c.id] || 0) + 1;
+  SC.fermo = true;
+  if (ok) vibra.ok(); else vibra.no();
+  // Prima si salva la risposta, poi si va avanti.
+  if (primaVolta) {
+    const g = votoScrittura(ok, ms, r.conTempo);
+    r.answers.push({ c: v.c.id, ok, ms, g });
+    await registra(eventoVoto(v.c, g, 'scrivi', undefined, ms));
+    syncPresto();
+  }
+  // Sbagliata o lenta: torna tra qualche carta, al massimo due volte.
+  if ((!ok || lenta) && r.fatte[v.c.id] < 3) r.queue.splice(Math.min(r.i + 4, r.queue.length), 0, v.c.id);
+  salvaRun();
+  document.querySelector('#sc-barra i')?.getAnimations().forEach((a) => a.pause());
+  if (ok) {
+    i.classList.add('ok');
+    box.innerHTML = `<span class="sc-bene">${ic.ok()}${lenta ? `Giusta, ma lenta: ${fmt(ms / 1000, 1)} s. Torna tra poco.` : 'Giusta'}</span>`;
+    setTimeout(prossimaScrivi, lenta ? 900 : 320);
+    return;
+  }
+  i.classList.add('no');
+  const tuaRisp = risposta ? `<div class="meta">Hai scritto: ${esc(risposta)}</div>` : '';
+  box.innerHTML = `<div class="perche"><div class="t sbagliato">Era: ${esc(v.giusta)}</div>${tuaRisp}${v.c.why ? `<p>${esc(v.c.why)}</p>` : ''}<p><b>Riscrivila per andare avanti.</b></p></div>`;
+  document.getElementById('sc-nonso').hidden = true;
+  i.value = ''; i.focus({ preventScroll: true });
+  SC.rifai = true; SC.fermo = false;
+}
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'sc-in' || !S.run || S.run.view !== 'scrivi') return;
+  if (!SC.t1 && e.target.value) SC.t1 = performance.now();
+  e.target.classList.remove('no');
+  const v = voceScrivi();
+  // Appena è giusta passa da sola, senza premere nulla.
+  if (v && normalizza(e.target.value) === normalizza(v.giusta)) esitoScrivi(true);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.id === 'sc-in') { e.preventDefault(); AZ.scControlla(); }
+});
+function fineScrivi() {
+  const r = S.run; r.finished = true;
+  const n = r.answers.length, ok = r.answers.filter((a) => a.ok).length;
+  if (n && !r.saved) {
+    r.saved = true;
+    registra({ id: A.nuovoId(), t: 's', kind: 'scrivi', decks: r.decks, at: new Date().toISOString(), dur: Math.round((Date.now() - r.started) / 1000), total: n, right: ok, wrong: n - ok, blank: 0, score: ok, max: n, senso: r.senso, conTempo: r.conTempo, answers: r.answers.map((a) => ({ c: a.c, ok: a.ok, ms: a.ms })) }).then(() => A.sincronizza());
+  }
+  salvaRun();
+  const giuste = r.answers.filter((a) => a.ok);
+  const media = giuste.length ? giuste.reduce((t, a) => t + a.ms, 0) / giuste.length / 1000 : 0;
+  const etichetta = (a) => { const p = coppiaDaCarta(S.cards[a.c]); return p ? `${esc(p.numero)} · ${esc(p.parola)}` : esc(a.c); };
+  const errate = r.answers.filter((a) => !a.ok);
+  const lente = giuste.slice().sort((a, b) => b.ms - a.ms).slice(0, 5);
+  const dure = paroleDifficili(A.eventi(), S.cards);
+  mostra(`${testaSessione('Allenamento finito', 'chiudiRun')}
+    <div class="tre"><div><b style="color:var(--ok)">${ok}</b><small>giuste</small></div><div><b style="color:var(--bad)">${n - ok}</b><small>da rifare</small></div><div><b>${giuste.length ? `${fmt(media, 1)} s` : '–'}</b><small>alla prima lettera</small></div></div>
+    ${errate.length ? `<section class="card"><h2>Sbagliate</h2>${errate.map((a) => `<div class="errori-riga"><b>${etichetta(a)}</b></div>`).join('')}</section>` : ''}
+    ${lente.length ? `<section class="card"><h2>Le più lente</h2>${lente.map((a) => `<div class="riga piccolo"><span>${etichetta(a)}</span><b class="num" style="color:var(--ink)">${fmt(a.ms / 1000, 1)} s</b></div>`).join('')}</section>` : ''}
+    ${dure.length ? `<div class="avviso">${ic.att}<span>Da valutare nel rodaggio, sbagliate o esitate più di 3 volte: ${dure.slice(0, 8).map((d) => `${esc(d.numero)} ${esc(d.parola)}`).join(', ')}.</span></div>` : ''}
+    <div class="piede"><button class="azione" data-a="chiudiRun">Torna a Oggi</button></div>`);
+}
+
 // ---------- RISULTATI ----------
 function grafico(sims, p) {
   if (sims.length < 2) return `<p class="piccolo">${sims.length ? 'Serve una seconda simulazione per vedere l\'andamento.' : 'Nessuna simulazione ancora. La prima vale come punto di partenza, non come giudizio.'}</p>`;
@@ -508,7 +651,7 @@ VISTE.risultati = () => {
   const righe = Object.entries(perMazzo).map(([d, v]) => ({ d, ...v, pct: v.r / v.t })).sort((a, b) => a.pct - b.pct).slice(0, 8);
   const colore = (x) => (x < 0.6 ? 'var(--bad-mark)' : x < 0.8 ? 'var(--warn-mark)' : 'var(--ok)');
   const fregano = tutte().map((c) => ({ c, s: S.progress[c.id] })).filter((x) => x.s?.lapses > 0).sort((a, b) => b.s.lapses - a.s.lapses || a.s.box - b.s.box).slice(0, 15);
-  const nomi = { flash: 'Ripasso', quiz: 'Quiz', sim: 'Simulazione' };
+  const nomi = { flash: 'Ripasso', quiz: 'Quiz', sim: 'Simulazione', scrivi: 'Scrivi a memoria' };
   const quando = (at) => new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', dateStyle: 'short', timeStyle: 'short' }).format(new Date(at));
   mostra(`<h1>Risultati</h1>
     <div class="segmenti" role="group" aria-label="Concorso">${pulsanteSegmento('risPreset', 'ade', pk === 'ade', 'Agenzia Entrate')}${pulsanteSegmento('risPreset', 'asmel', pk === 'asmel', 'ASMEL')}</div>
@@ -602,6 +745,24 @@ const AZ = {
   filtroMazzi(el) { S.ui.filtroMazzi = el.dataset.v || null; route(); },
   mazzoRipassa(el) { S.prefs.flDecks = [el.dataset.v]; S.ui.flModo = null; salvaPrefs(); vai('ripasso'); },
   mazzoQuiz(el) { S.prefs.qzDecks = [el.dataset.v]; salvaPrefs(); vai('quiz'); },
+  mazzoScrivi(el) { S.prefs.scDecks = [el.dataset.v]; salvaPrefs(); vai('scrivi'); },
+  scSenso(el) { S.prefs.scSenso = el.dataset.v; salvaPrefs(); route(); },
+  scTempo() { S.prefs.scTempo = !S.prefs.scTempo; salvaPrefs(); route(); },
+  iniziaScrivi() {
+    const senso = S.prefs.scSenso || 'np', lista = mazziScrittura(), sel = (S.prefs.scDecks || []).filter((id) => lista.some((d) => d.id === id));
+    const scelte = scegliScrittura(carteDi(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), S.prefs.scN || 20);
+    if (!scelte.length) { toast('Nessuna carta per questa scelta'); return; }
+    S.run = { view: 'scrivi', kind: 'scrivi', senso, conTempo: !!S.prefs.scTempo, queue: scelte.map((c) => c.id), i: 0, answers: [], fatte: {}, started: Date.now(), decks: sel, finished: false };
+    salvaRun(); route();
+  },
+  scControlla() {
+    const i = document.getElementById('sc-in'), v = voceScrivi();
+    if (!i || !v || !i.value.trim()) { i?.focus({ preventScroll: true }); return; }
+    esitoScrivi(normalizza(i.value) === normalizza(v.giusta), i.value);
+    i.focus({ preventScroll: true });
+  },
+  scNonSo() { esitoScrivi(false); },
+  fermaScrivi() { const r = S.run; r.queue = r.queue.slice(0, r.i); r.i = r.queue.length; fineScrivi(); },
   tuttiMazzi(el) { S.prefs[el.dataset.v] = []; salvaPrefs(); route(); },
   toggleMazzo(el) {
     const k = el.dataset.k, id = el.dataset.v, cur = S.prefs[k] || [];
@@ -609,7 +770,7 @@ const AZ = {
     salvaPrefs(); route();
   },
   passo(el) {
-    const k = el.dataset.k, def = k === 'flN' ? 30 : 15;
+    const k = el.dataset.k, def = { flN: 30, qzN: 15, scN: 20 }[k] || 15;
     S.prefs[k] = Math.max(5, Math.min(100, (S.prefs[k] || def) + Number(el.dataset.v)));
     salvaPrefs(); route();
   },
@@ -794,7 +955,7 @@ document.addEventListener('click', (ev) => {
   if (!el || el.disabled) return;
   const az = el.dataset.a;
   // Queste azioni hanno una vibrazione propria; in simulazione nulla rivela se la risposta è giusta.
-  if (!['vota', 'qzPick', 'flPick', 'consegna', 'vibrazioni'].includes(az)) vibra.tocco();
+  if (!['vota', 'qzPick', 'flPick', 'consegna', 'vibrazioni', 'scControlla', 'scNonSo'].includes(az)) vibra.tocco();
   if (az) {
     S.ui.ultimo = `[data-a="${CSS.escape(az)}"]${el.dataset.v != null ? `[data-v="${CSS.escape(el.dataset.v)}"]` : ''}${el.dataset.k != null ? `[data-k="${CSS.escape(el.dataset.k)}"]` : ''}`;
     if (AZ[az]) AZ[az](el);

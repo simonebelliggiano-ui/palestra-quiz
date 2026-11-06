@@ -212,6 +212,29 @@ label.campo { display: flex; flex-direction: column; gap: 4px; font-size: 13px; 
 #toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--top) + 6px); width: max-content; max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 22px; background: var(--ink); color: #fff; font-size: 14px; font-weight: 600; text-align: center; z-index: 30; opacity: 0; translate: 0 -14px; pointer-events: none; transition: opacity .2s, translate .36s var(--molla); }
 #toast.vedi { opacity: 1; translate: 0 0; }
 
+/* Scrivi a memoria: tutto in alto, perché sotto c'è la tastiera */
+.riga-azione { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 60px; padding: 10px 16px; border-radius: 22px; background: var(--glass); border: 1.5px solid #fff; box-shadow: var(--shadow); color: var(--tile-blue); }
+.riga-azione b { display: block; font-size: 16px; line-height: 21px; font-weight: 700; } .riga-azione span span { display: block; font-size: 13px; line-height: 18px; font-weight: 500; }
+.scorciatoie.tre-bottoni { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.sc-carta { gap: 8px; padding: 16px 20px; }
+.sc-domanda { min-height: 72px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 34px; line-height: 40px; font-weight: 800; overflow-wrap: anywhere; }
+.sc-domanda.numero { font-size: 64px; line-height: 72px; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+.sc-barra { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.sc-barra[hidden] { display: none; }
+.sc-barra i { display: block; height: 100%; border-radius: 3px; background: var(--blue); transform-origin: left; }
+.sc-barra.finita { background: var(--warn-mark); }
+.sc-etichetta { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink2); }
+.campo .sc-in { min-height: 56px; border-radius: 18px; font-size: 24px; font-weight: 700; text-align: center; }
+.campo .sc-in.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+.campo .sc-in.no { border-color: var(--bad); animation: scuoti .36s ease-out; }
+.sc-esito:empty { display: none; }
+.sc-bene { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--ok); }
+.sc-esito { text-align: center; }
+.sc-esito .perche { text-align: left; animation: dal-basso .3s var(--scivola); }
+.sc-esito .perche .t { font-size: 17px; line-height: 24px; }
+.scorciatoie [hidden] { display: none; }
+.scorciatoie:has([hidden]) { grid-template-columns: minmax(0,1fr); }
+
 /* ---------- Movimento ---------- */
 button, a, .chip { touch-action: manipulation; -webkit-user-select: none; user-select: none; }
 button, .tile, a.azione { transition: scale .34s var(--molla), background-color .2s, color .2s, opacity .2s, box-shadow .2s; }
