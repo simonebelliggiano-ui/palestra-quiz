@@ -318,3 +318,145 @@ export function paroleDifficili(eventi, cards) {
   }
   return [...conti.values()].filter((r) => r.volte > 3).sort((a, b) => b.volte - a.volte);
 }
+
+// ---------- Rotta: costanza, lezioni e manuale ----------
+// Manuale EdiSES del concorso 622: 306 pagine in quattro libri.
+export const MANUALE = {
+  pagine: 306,
+  libri: [
+    { n: 'I', nome: 'Diritto amministrativo', da: 1, a: 182 },
+    { n: 'II', nome: 'Pubblico impiego', da: 183, a: 216 },
+    { n: 'III', nome: 'Ordinamento AdE', da: 217, a: 244 },
+    { n: 'IV', nome: 'Inglese e Informatica', da: 245, a: 306 },
+  ],
+};
+// Un giorno conta se chiudi almeno una sessione o dai almeno 10 risposte.
+export const RISPOSTE_GIORNO_MINIMO = 10;
+export const SETTIMANE_CATENA = 20;
+const ymdValido = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '') && romeDate(`${s}T12:00:00Z`) === s;
+const giornoDi = (e) => (e.t === 'l' && ymdValido(e.giorno) ? e.giorno : romeDate(e.at));
+// Lunedì della settimana di un giorno.
+export const lunedi = (ymd) => addDays(ymd, -((new Date(`${ymd}T12:00:00Z`).getUTCDay() + 6) % 7));
+
+// Lezioni segnate, tolte quelle cancellate. Le più recenti prima.
+export function lezioni(eventi) {
+  const tolte = new Set(eventi.filter((e) => e.t === 'lx').map((e) => e.ref));
+  return ordinaEventi(eventi.filter((e) => e.t === 'l' && !tolte.has(e.id)))
+    .map((e) => ({ id: e.id, giorno: giornoDi(e), arg: e.arg || '', da: e.da ?? null, a: e.a ?? null, fonte: e.fonte || 'app', at: e.at }))
+    .sort((x, y) => (x.giorno < y.giorno ? 1 : x.giorno > y.giorno ? -1 : x.at < y.at ? 1 : -1));
+}
+
+// Cosa è successo in ogni giorno.
+export function attivitaGiorni(eventi) {
+  const m = new Map(), voce = (g) => { if (!m.has(g)) m.set(g, { sessioni: 0, risposte: 0, lezioni: 0 }); return m.get(g); };
+  for (const e of eventi) {
+    if (e.t === 's') voce(romeDate(e.at)).sessioni++;
+    else if (e.t === 'v') voce(romeDate(e.at)).risposte++;
+  }
+  for (const l of lezioni(eventi)) voce(l.giorno).lezioni++;
+  return m;
+}
+// 0 niente, 1 giorno minimo, 2 giorno pieno (c'è una lezione).
+export const livelloGiorno = (g) => (!g ? 0 : g.lezioni > 0 ? 2 : g.sessioni > 0 || g.risposte >= RISPOSTE_GIORNO_MINIMO ? 1 : 0);
+
+export function catena(eventi, oggi, settimane = SETTIMANE_CATENA) {
+  const att = attivitaGiorni(eventi), liv = (g) => livelloGiorno(att.get(g));
+  const fine = addDays(lunedi(oggi), 6), inizio = addDays(lunedi(oggi), -7 * (settimane - 1));
+  const giorni = [];
+  for (let g = inizio; g <= fine; g = addDays(g, 1)) giorni.push({ giorno: g, livello: g > oggi ? 0 : liv(g), futuro: g > oggi, ...(att.get(g) || { sessioni: 0, risposte: 0, lezioni: 0 }) });
+  // La serie resta viva fino a stasera: se oggi non hai ancora fatto nulla, conta da ieri.
+  let serie = 0;
+  for (let g = liv(oggi) ? oggi : addDays(oggi, -1); liv(g); g = addDays(g, -1)) serie++;
+  let record = 0, corsa = 0, prec = null;
+  for (const g of [...att.keys()].filter((x) => x <= oggi && liv(x)).sort()) {
+    corsa = prec && daysBetween(prec, g) === 1 ? corsa + 1 : 1;
+    record = Math.max(record, corsa); prec = g;
+  }
+  return { giorni, serie, record, oggiFatto: liv(oggi) > 0, ieriFatto: liv(addDays(oggi, -1)) > 0, haStoria: att.size > 0 };
+}
+
+// Regola dei due giorni: mai saltare due giorni di fila.
+export function regolaDueGiorni(eventi, oggi) {
+  const c = catena(eventi, oggi, 1);
+  if (!c.haStoria || c.ieriFatto) return null;
+  return c.oggiFatto ? 'salva' : 'minimo';
+}
+
+// Pagine del manuale coperte dalle lezioni. Una pagina rifatta due volte conta una volta.
+export function avanzamentoManuale(lista) {
+  const lette = new Set();
+  for (const l of lista) {
+    if (!Number.isInteger(l.da) || !Number.isInteger(l.a)) continue;
+    for (let p = Math.max(1, l.da); p <= Math.min(MANUALE.pagine, l.a); p++) lette.add(p);
+  }
+  const libri = MANUALE.libri.map((b) => {
+    let n = 0;
+    for (let p = b.da; p <= b.a; p++) if (lette.has(p)) n++;
+    return { ...b, lette: n, tot: b.a - b.da + 1 };
+  });
+  return { lette: lette.size, tot: MANUALE.pagine, libri };
+}
+
+// Settimana da lunedì a domenica.
+export function riepilogoSettimana(eventi, oggi) {
+  const da = lunedi(oggi), a = addDays(da, 6), dentro = (g) => g >= da && g <= a;
+  const att = attivitaGiorni(eventi);
+  let attivi = 0;
+  for (let g = da; g <= a && g <= oggi; g = addDays(g, 1)) if (livelloGiorno(att.get(g))) attivi++;
+  const sims = eventi.filter((e) => e.t === 's' && e.kind === 'sim').sort((x, y) => (x.at > y.at ? -1 : 1));
+  return {
+    da, a, attivi,
+    lezioni: lezioni(eventi).filter((l) => dentro(l.giorno)).length,
+    carte: new Set(eventi.filter((e) => e.t === 'v' && dentro(romeDate(e.at))).map((e) => e.c)).size, // carte diverse, non risposte
+    risposte: eventi.filter((e) => e.t === 'v' && dentro(romeDate(e.at))).length,
+    ultimaSim: sims[0] || null,
+  };
+}
+
+// Conti alla rovescia. La data può essere un giorno (2027-01-20) o solo un mese (2027-01).
+export const SCADENZE_BASE = [
+  { chiave: 'asmel', nome: 'ASMEL', data: '2027-01', nota: 'Giorno da confermare' },
+  { chiave: 'ade335', nome: 'Bando 335 Agenzia Entrate', data: null, nota: 'Quando esce il bando' },
+];
+const dataScadenzaValida = (s) => s == null || s === '' || ymdValido(s) || (/^\d{4}-(0[1-9]|1[0-2])$/.test(s));
+export function scadenze(eventi) {
+  const m = new Map(SCADENZE_BASE.map((s) => [s.chiave, { ...s }]));
+  for (const e of ordinaEventi(eventi)) {
+    if (e.t !== 'sc' || !e.chiave || !dataScadenzaValida(e.data)) continue;
+    const prima = m.get(e.chiave) || { chiave: e.chiave, nome: e.chiave, nota: '' };
+    m.set(e.chiave, { ...prima, nome: e.nome || prima.nome, data: e.data || null, nota: e.data ? '' : prima.nota });
+  }
+  return [...m.values()];
+}
+// Giorni che mancano. Con solo il mese si conta fino al primo del mese: "almeno".
+export function quantoManca(data, oggi) {
+  if (!data) return null;
+  if (ymdValido(data)) return { giorni: daysBetween(oggi, data), almeno: false };
+  return { giorni: daysBetween(oggi, `${data}-01`), almeno: true };
+}
+
+// Lezioni scritte da una chat del progetto (FINE SESSIONE) e incollate nell'app.
+// Lo stesso testo incollato due volte produce lo stesso id, quindi non si duplica.
+const impronta = (s) => { let h = 2166136261; for (const ch of s) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } return h.toString(36); };
+export function validaLezione(l, oggi) {
+  const arg = String(l?.argomento ?? l?.arg ?? '').trim();
+  const giorno = l?.giorno ?? oggi;
+  const da = l?.da == null || l.da === '' ? null : Number(l.da), a = l?.a == null || l.a === '' ? null : Number(l.a);
+  const errori = [];
+  if (!arg || arg.length > 200) errori.push("manca l'argomento");
+  if (!ymdValido(giorno)) errori.push('giorno non valido (AAAA-MM-GG)');
+  else if (giorno > oggi) errori.push('il giorno è nel futuro');
+  if ((da == null) !== (a == null)) errori.push('servono tutte e due le pagine, da e a');
+  else if (da != null && !(Number.isInteger(da) && Number.isInteger(a) && da >= 1 && a <= MANUALE.pagine && da <= a)) errori.push(`le pagine vanno da 1 a ${MANUALE.pagine} e "da" non può superare "a"`);
+  return { lezione: { giorno, arg, da, a }, errori };
+}
+export function lezioniDaJson(data, oggi, at) {
+  const lista = Array.isArray(data) ? data : Array.isArray(data?.lezioni) ? data.lezioni : data?.lezione ? [data.lezione] : (data?.argomento || data?.arg) ? [data] : [];
+  const eventi = [], errori = [];
+  lista.forEach((x, i) => {
+    const { lezione: l, errori: e } = validaLezione(x, oggi);
+    if (e.length) { errori.push(`lezione ${i + 1}: ${e.join(', ')}`); return; }
+    eventi.push({ id: `chat-${impronta(`${l.giorno}|${l.arg}|${l.da}|${l.a}`)}`, t: 'l', at, giorno: l.giorno, arg: l.arg, ...(l.da != null ? { da: l.da, a: l.a } : {}), fonte: 'chat' });
+  });
+  return { eventi, errori, trovate: lista.length };
+}

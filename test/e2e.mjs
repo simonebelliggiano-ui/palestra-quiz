@@ -559,6 +559,107 @@ await quieto.page.locator('.opz').first().click();
 ok(await quieto.page.locator('.perche').evaluate((e) => getComputedStyle(e).animationName === 'none'), 'con "riduci movimento" le animazioni si spengono');
 await quieto.ctx.close();
 
+console.log('\n8c. Rotta: catena, lezioni, manuale, conti alla rovescia');
+{
+  const core = await import('../js/core.js');
+  // Un iPhone con l'orologio spostato alla prima domenica che viene almeno fra due giorni:
+  // ieri (sabato) non c'è niente, quindi deve scattare la regola dei due giorni.
+  let dom = core.addDays(core.romeDate(), 2);
+  while (new Date(`${dom}T12:00:00Z`).getUTCDay() !== 0) dom = core.addDays(dom, 1);
+  const rt = await dispositivo(browser, 'rotta', iPhone16);
+  await rt.ctx.clock.setFixedTime(new Date(`${dom}T09:00:00Z`)); // le 10 in Italia
+  await rt.page.reload();
+  await collega(rt.page);
+  const p = rt.page;
+  await p.goto(`${BASE}#oggi`); await p.waitForSelector('.tile');
+  ok((await p.locator('.minimo').textContent()).includes('Oggi basta il giorno minimo: 10 minuti di ripasso'), 'ieri niente: la home propone il giorno minimo');
+  ok(/La tua settimana/.test(await p.locator('#app').textContent()), 'domenica: in home c\'è il riepilogo della settimana');
+  await foto(p, '40-oggi-giorno-minimo');
+  await senzaSforamenti(p, 'Oggi con giorno minimo');
+  ok((await p.locator('#nav a').count()) === 5 && (await p.locator('#nav a[data-k="rotta"]').count()) === 1, 'la barra ha cinque schede, con Rotta');
+  await p.locator('#nav a[data-k="rotta"]').click();
+  await p.waitForSelector('.catena');
+  ok((await p.locator('.catena .cella').count()) === 140, 'catena: 20 settimane da 7 giorni');
+  ok((await p.locator('.catena .cella.futuro').count()) === 0, 'di domenica nessun giorno futuro nella griglia');
+  ok((await p.locator('.catena .cella.l1, .catena .cella.l2').count()) >= 1, 'i giorni con sessioni si colorano da soli');
+  let numeri = await p.locator('.tre b').allTextContents();
+  ok(numeri[0] === '0' && Number(numeri[1]) >= 1, `serie 0 dopo un giorno saltato, record ${numeri[1]}`);
+  await foto(p, '41-rotta');
+  await senzaSforamenti(p, 'Rotta');
+
+  // Lezione fatta dall'app
+  await clic(p, 'apriLezione');
+  await p.fill('#lz-arg', 'L. 241/1990, responsabile del procedimento');
+  await p.fill('#lz-da', '30'); await p.fill('#lz-a', '10');
+  await clic(p, 'salvaLezione');
+  await p.waitForFunction(() => /non può superare/.test(document.querySelector('#toast')?.textContent || ''));
+  ok((await p.inputValue('#lz-arg')).startsWith('L. 241'), 'pagine sbagliate: rifiutata, il testo resta');
+  await p.fill('#lz-da', '1'); await p.fill('#lz-a', '20');
+  await foto(p, '42-rotta-lezione');
+  await clic(p, 'salvaLezione');
+  await p.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Lezione segnata');
+  ok(await p.locator(`.cella[data-v="${dom}"]`).evaluate((e) => e.classList.contains('l2')), 'con la lezione il giorno diventa pieno');
+  ok(/20 di 306 pagine/.test(await p.locator('#app').textContent()), 'manuale: 20 di 306 pagine');
+  ok((await p.locator('.barra-riga', { hasText: 'Libro I ·' }).textContent()).includes('20/182'), 'Libro I: 20/182');
+  ok((await p.locator('.avviso.ok').count()) === 1 && (await p.locator('.minimo').count()) === 0, 'giorno minimo fatto: la catena è salva');
+  numeri = await p.locator('.tre b').allTextContents();
+  ok(numeri[0] === '1', 'la serie riparte da 1');
+
+  // Togliere una lezione chiede conferma
+  await clic(p, 'togliLezione');
+  ok((await p.locator('[data-a="togliLezione"]').first().textContent()).trim() === 'Togli', 'togliere una lezione chiede conferma');
+  await clic(p, 'togliLezione');
+  await p.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Lezione tolta');
+  ok(/0 di 306 pagine/.test(await p.locator('#app').textContent()), 'lezione tolta: il manuale torna a 0');
+
+  // Lezioni da una chat, dentro un blocco di codice, incollate due volte
+  const ieri = core.addDays(dom, -1);
+  const blocco = '```json\n' + JSON.stringify({ lezioni: [{ giorno: ieri, argomento: 'D.Lgs. 165/2001, artt. 1-5', da: 183, a: 190 }, { argomento: 'Statuto del contribuente, art. 1', da: 217, a: 220 }] }) + '\n```';
+  await clic(p, 'apri', '[data-v="incolla"]');
+  await p.fill('#lz-json', blocco);
+  await clic(p, 'incollaLezioni');
+  await p.waitForFunction(() => /2 lezioni aggiunte/.test(document.querySelector('#toast')?.textContent || ''));
+  ok(await p.locator(`.cella[data-v="${ieri}"]`).evaluate((e) => e.classList.contains('l2')), 'la lezione della chat colora il suo giorno, non quello dell\'incollaggio');
+  ok((await p.locator('.barra-riga', { hasText: 'Libro II ·' }).textContent()).includes('8/34') && (await p.locator('.barra-riga', { hasText: 'Libro III ·' }).textContent()).includes('4/28'), 'pagine della chat contate nei libri giusti');
+  numeri = await p.locator('.tre b').allTextContents();
+  ok(numeri[0] === '2', 'ieri recuperato con la lezione: serie 2');
+  await clic(p, 'apri', '[data-v="incolla"]');
+  await p.fill('#lz-json', blocco);
+  await clic(p, 'incollaLezioni');
+  await p.waitForTimeout(150);
+  ok(/erano già segnate/.test(await p.locator('#lz-esito').textContent()), 'stesso blocco incollato due volte: nessun doppione');
+
+  // Conti alla rovescia
+  ok((await p.locator('.scadenza', { hasText: 'ASMEL' }).textContent()).includes('almeno'), 'ASMEL a gennaio 2027: "almeno" N giorni');
+  ok((await p.locator('.scadenza', { hasText: 'Bando 335' }).textContent()).includes('Quando esce il bando'), 'bando 335: data da fissare');
+  await clic(p, 'modScadenza', '[data-v="ade335"]');
+  await p.fill('#sc-data-ade335', core.addDays(dom, 40));
+  await clic(p, 'salvaScadenza', '[data-v="ade335"]');
+  await p.waitForTimeout(150);
+  ok((await p.locator('.scadenza', { hasText: 'Bando 335' }).locator('.scad-giorni').textContent()) === '40 giorni', 'bando 335 fissato: 40 giorni');
+  await foto(p, '43-rotta-sotto');
+
+  // Gestione accetta lezioni insieme alle carte
+  await p.goto(`${BASE}#gestione`);
+  await clic(p, 'apri', '[data-v="import"]');
+  await p.fill('#g-json', JSON.stringify({ lezioni: [{ argomento: 'Informatica, CAD', da: 300, a: 306 }] }));
+  await clic(p, 'importa');
+  await p.waitForFunction(() => /1 lezione aggiunta/.test(document.querySelector('#toast')?.textContent || ''));
+  ok(true, 'Gestione: un JSON con sole lezioni le aggiunge');
+
+  // Tutto finisce nel repository e arriva sull'altro dispositivo
+  await sincronizza(p);
+  const reg = [...GH.files].filter(([k]) => k.startsWith('registro/')).map(([, f]) => f.testo).join('\n');
+  ok(/"t":"l".*"fonte":"chat"/.test(reg) && /"t":"lx"/.test(reg) && /"t":"sc".*"chiave":"ade335"/.test(reg), 'lezioni, cancellazioni e date salvate come eventi nel repository');
+  await sincronizza(pc.page);
+  await pc.page.goto(`${BASE}#rotta`); await pc.page.waitForSelector('.catena');
+  ok(/19 di 306 pagine/.test(await pc.page.locator('#app').textContent()), 'il PC vede le stesse pagine del manuale (8 + 4 + 7)');
+  await foto(pc.page, '44-pc-rotta');
+  const sT = await stato(tel.page);
+  ok(Object.keys(sT.progress).length > 0, 'i nuovi eventi non disturbano i progressi');
+  await rt.ctx.close();
+}
+
 console.log('\n9. Offline vero e installazione');
 const off = await browser.newContext({ ...iPhone16 });
 await off.route('https://api.github.com/**', ghFinto);

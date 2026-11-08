@@ -3,11 +3,13 @@ import {
   PRESETS, MATERIE, ORDINE_MATERIE, romeDate, materiaKey, preparaSimulazione, calcolaPunteggio, ricostruisci,
   inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, fmt, fmtMin, mmss,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili, LIMITE_MS,
+  lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, validaLezione, lezioniDaJson,
+  SETTIMANE_CATENA, RISPOSTE_GIORNO_MINIMO,
 } from './core.js';
 import { Archivio, kvGet, kvSet, kvDel } from './store.js';
 import { BarraLiquida, vibra, impostaVibrazioni, uscita, rimbalzo, contaFino, fermo } from './moto.js';
 
-const VERSIONE = '1.3';
+const VERSIONE = '1.4';
 const REPO_DEFAULT = 'simonebelliggiano-ui/palestra-quiz-dati';
 const NOME = 'Simone';
 
@@ -36,6 +38,7 @@ const ic = {
 };
 const NAV = [
   ['oggi', 'Oggi', '<circle cx="12" cy="12" r="4.500"/><path d="M12 2.500V5M12 19v2.500M2.500 12H5M19 12h2.500M5.300 5.300L7 7M17 17l1.700 1.700M5.300 18.700L7 17M17 7l1.700-1.700"/>'],
+  ['rotta', 'Rotta', '<circle cx="12" cy="12" r="9"/><path d="M15.500 8.500l-2.200 5.300-5.300 2.200 2.200-5.300z"/>'],
   ['mazzi', 'Mazzi', '<rect x="8" y="3" width="13" height="15" rx="3"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/>'],
   ['risultati', 'Risultati', '<path d="M3.500 17L9 11l4 3.500L20.500 6"/><path d="M15.500 6h5v5"/>'],
   ['gestione', 'Gestione', '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.200"/><circle cx="8" cy="17" r="2.200"/>'],
@@ -80,7 +83,7 @@ const salvaRun = () => (S.run ? kvSet('run', S.run) : kvDel('run'));
 
 // ---------- percorso ----------
 const VISTE = {};
-const NAV_K = ['oggi', 'mazzi', 'risultati', 'gestione'];
+const NAV_K = ['oggi', 'rotta', 'mazzi', 'risultati', 'gestione'];
 const barraNav = new BarraLiquida(nav, NAV.map(([k, t, p]) => [k, t, svgNav(p)]), (nome, cambia) => { if (cambia) vai(nome); });
 function vai(h) { if (location.hash === `#${h}`) route(); else location.hash = h; }
 function route() {
@@ -173,9 +176,12 @@ VISTE.oggi = () => {
   const inCorso = S.run && !S.run.finished;
   const nomiRun = { flash: 'il ripasso', quiz: 'il quiz', sim: 'la simulazione', scrivi: "l'allenamento" };
   const haScrivi = all.some((c) => coppiaDaCarta(c));
+  const ev = A.eventi(), dueGiorni = regolaDueGiorni(ev, d);
   mostra(`
     <div class="centro"><div class="saluto">${ic.cap}${saluto}, ${NOME}</div><h1>${titolo}</h1></div>
     ${bannerSync()}
+    ${dueGiorni === 'minimo' && !inCorso ? `<a class="minimo" href="#ripasso" data-a="giornoMinimo"><span><b>Oggi basta il giorno minimo: 10 minuti di ripasso</b><span>Ieri niente. Mai due giorni di fila: così la catena non si rompe.</span></span>${ic.dx('#2F4FAE')}</a>` : ''}
+    ${domenica(d) ? cartaSettimana(riepilogoSettimana(ev, d), 'La tua settimana') : ''}
     ${inCorso ? `<a class="azione" href="#${S.run.view}">Riprendi ${nomiRun[S.run.kind]}</a>` : ''}
     ${!A.collegato() ? `<div class="card"><h2>Collega i tuoi dati</h2><p class="piccolo">Carte e progressi stanno nel tuo repository privato. Basta farlo una volta per dispositivo.</p><a class="azione piccola" href="#gestione">Vai a Gestione</a></div>` : ''}
     <div class="tile-griglia">
@@ -663,6 +669,99 @@ VISTE.risultati = () => {
     <section class="card" style="gap:0"><h2 style="padding-bottom:6px">Tutte le sessioni</h2>${S.sessions.length ? `<div class="tabella">${S.sessions.slice(0, 40).map((s) => `<div><span>${esc(nomi[s.kind] || s.kind)}${s.kind === 'sim' ? ` ${esc(PRESETS[s.preset]?.label || '')}` : ''}<br><span class="meta">${quando(s.at)} · ${mmss(s.dur || 0)}</span></span><span></span><span>${s.kind === 'sim' ? `${fmt(s.score)}/${s.max}` : `${s.right}/${s.total}`}</span></div>`).join('')}</div>` : '<p class="piccolo">Nessuna sessione.</p>'}</section>`);
 };
 
+// ---------- ROTTA ----------
+const dataUtc = (ymd) => new Date(`${ymd}T12:00:00Z`);
+const domenica = (ymd) => dataUtc(ymd).getUTCDay() === 0;
+const fmtGiorno = new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
+const fmtCorto = new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+const fmtMese = new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC', month: 'long', year: 'numeric' });
+const fmtMeseBreve = new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC', month: 'short' });
+const maiusc = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+const giornoLungo = (ymd) => maiusc(fmtGiorno.format(dataUtc(ymd)));
+const pagine = (l) => (l.da != null ? `pp. ${l.da}-${l.a}` : 'senza pagine');
+function cartaSettimana(r, titolo) {
+  const sim = r.ultimaSim;
+  return `<section class="card settimana"><div class="riga"><h2>${titolo}</h2><span class="meta">${fmtCorto.format(dataUtc(r.da))} – ${fmtCorto.format(dataUtc(r.a))}</span></div>
+    <div class="tre quattro"><div><b class="num">${r.attivi}/7</b><small>giorni attivi</small></div><div><b class="num">${r.lezioni}</b><small>${r.lezioni === 1 ? 'lezione' : 'lezioni'}</small></div><div><b class="num">${r.carte}</b><small>carte ripassate</small></div><div><b class="num">${sim ? fmt(sim.score) : '–'}</b><small>${sim ? `ultima simulazione, ${fmtCorto.format(dataUtc(romeDate(sim.at)))}` : 'nessuna simulazione'}</small></div></div></section>`;
+}
+function griglia(c, d) {
+  const sel = S.ui.giornoSel && c.giorni.some((g) => g.giorno === S.ui.giornoSel && !g.futuro) ? S.ui.giornoSel : d;
+  const settimane = [];
+  for (let i = 0; i < c.giorni.length; i += 7) settimane.push(c.giorni.slice(i, i + 7));
+  // Il nome del mese sopra la settimana in cui il mese comincia.
+  const inizia = (w) => w.find((g) => g.giorno.endsWith('-01'));
+  // La prima colonna prende il nome del suo mese solo se il mese dopo non comincia subito accanto.
+  const mesi = settimane.map((w, i) => { const p = inizia(w) || (i === 0 && !settimane.slice(1, 3).some(inizia) ? w[0] : null); return `<span>${p ? fmtMeseBreve.format(dataUtc(p.giorno)).replace('.', '') : ''}</span>`; }).join('');
+  const celle = c.giorni.map((g) => `<span class="cella l${g.livello}${g.futuro ? ' futuro' : ''}${g.giorno === d ? ' oggi' : ''}${g.giorno === sel ? ' scelta' : ''}" ${g.futuro ? '' : `data-a="giorno" data-v="${g.giorno}"`}></span>`).join('');
+  const attivi = c.giorni.filter((g) => g.livello).length;
+  const g = c.giorni.find((x) => x.giorno === sel);
+  const parti = [g.sessioni && plur(g.sessioni, 'sessione', 'sessioni'), g.risposte && plur(g.risposte, 'risposta', 'risposte'), g.lezioni && plur(g.lezioni, 'lezione', 'lezioni')].filter(Boolean);
+  const stato = g.livello === 2 ? 'giorno pieno' : g.livello === 1 ? 'giorno minimo' : g.giorno === d ? 'ancora niente' : 'nessuna attività';
+  return `<div class="catena-mesi" aria-hidden="true"><span></span>${mesi}</div>
+    <div class="catena" role="img" aria-label="Ultime ${SETTIMANE_CATENA} settimane: ${attivi} giorni attivi"><span>L</span><span></span><span>M</span><span></span><span>V</span><span></span><span>D</span>${celle}</div>
+    <div class="legenda" aria-hidden="true"><span><i class="cella l0"></i>niente</span><span><i class="cella l1"></i>giorno minimo</span><span><i class="cella l2"></i>con lezione</span></div>
+    <p class="piccolo giorno-scelto"><b>${giornoLungo(sel)}</b>: ${stato}${parti.length ? ` · ${parti.join(', ')}` : ''}</p>`;
+}
+function cartaScadenza(s, d) {
+  const q = quantoManca(s.data, d), mod = S.ui.scadMod === s.chiave;
+  const quando = !s.data ? s.nota : s.data.length === 7 ? `${maiusc(fmtMese.format(dataUtc(`${s.data}-01`)))}${s.nota ? ` · ${s.nota.toLowerCase()}` : ''}` : `${giornoLungo(s.data)} ${s.data.slice(0, 4)}`;
+  const conto = !q ? '–' : q.giorni < 0 ? 'passata' : q.giorni === 0 ? 'oggi' : `${q.almeno ? 'almeno ' : ''}${plur(q.giorni, 'giorno', 'giorni')}`;
+  return `<div class="scadenza"><div class="tra"><div style="min-width:0"><div class="scad-nome">${esc(s.nome)}</div><div class="meta">${esc(quando)}</div></div><div class="scad-giorni num">${conto}</div></div>
+    ${mod ? `<div class="scad-mod"><label class="campo">Data della prova<input id="sc-data-${esc(s.chiave)}" type="date" value="${s.data && s.data.length === 10 ? s.data : ''}" min="${d}"></label>
+      <div class="scorciatoie"><button class="azione piccola" data-a="salvaScadenza" data-v="${esc(s.chiave)}">Salva</button><button class="azione tenue piccola" data-a="togliScadenza" data-v="${esc(s.chiave)}">Togli la data</button></div></div>`
+    : `<button class="link-piccolo" data-a="modScadenza" data-v="${esc(s.chiave)}">${s.data ? 'Cambia la data' : 'Imposta la data'}</button>`}</div>`;
+}
+VISTE.rotta = () => {
+  const d = oggi(), ev = A.eventi(), c = catena(ev, d), lista = lezioni(ev), man = avanzamentoManuale(lista), r = riepilogoSettimana(ev, d);
+  const due = regolaDueGiorni(ev, d), form = S.ui.formLezione;
+  const pct = (a, b) => (b ? (a / b) * 100 : 0);
+  mostra(`<h1>Rotta</h1><p class="sotto">Un giorno alla volta, senza saltarne due</p>
+    ${bannerSync()}
+    ${due === 'minimo' ? `<a class="minimo" href="#ripasso" data-a="giornoMinimo"><span><b>Oggi basta il giorno minimo: 10 minuti di ripasso</b><span>Ieri niente. Mai due giorni di fila.</span></span>${ic.dx('#2F4FAE')}</a>` : ''}
+    ${due === 'salva' ? `<div class="avviso ok">${ic.ok(16)}<span>Catena salva: ieri niente, ma oggi il giorno minimo è fatto.</span></div>` : ''}
+    <div class="tre"><div><b class="num">${c.serie}</b><small>serie attuale</small></div><div><b class="num">${c.record}</b><small>record</small></div><div><b class="num">${r.attivi}/7</b><small>questa settimana</small></div></div>
+    <section class="card"><div class="riga"><h2>Catena dei giorni</h2><span class="meta">${SETTIMANE_CATENA} settimane</span></div>${griglia(c, d)}
+      <p class="meta">Un giorno conta se chiudi una sessione o dai ${RISPOSTE_GIORNO_MINIMO} risposte. Con una lezione segnata diventa pieno.</p></section>
+    ${form ? `<section class="card lezione-form"><h2>Lezione fatta</h2>
+      <label class="campo">Argomento<input id="lz-arg" type="text" maxlength="200" autocomplete="off" placeholder="Es. L. 241/1990, responsabile del procedimento" value="${esc(form.arg || '')}"></label>
+      <label class="campo">Giorno<input id="lz-giorno" type="date" max="${d}" value="${esc(form.giorno || d)}"></label>
+      <div class="due-campi"><label class="campo">Pagine da<input id="lz-da" type="number" inputmode="numeric" min="1" max="306" placeholder="1" value="${esc(form.da ?? '')}"></label><label class="campo">a<input id="lz-a" type="number" inputmode="numeric" min="1" max="306" placeholder="306" value="${esc(form.a ?? '')}"></label></div>
+      <p class="meta">Le pagine sono quelle del manuale EdiSES. Se la lezione non segue il manuale lasciale vuote.</p>
+      <div class="scorciatoie"><button class="azione piccola" data-a="salvaLezione">Salva la lezione</button><button class="azione tenue piccola" data-a="chiudiLezione">Annulla</button></div></section>`
+    : '<button class="azione" data-a="apriLezione">Lezione fatta</button>'}
+    <section class="card"><div class="riga"><h2>Manuale EdiSES</h2><span class="meta num">${man.lette} di ${man.tot} pagine</span></div>
+      <div class="barra grossa"><i style="width:${pct(man.lette, man.tot)}%"></i></div>
+      ${man.libri.map((b) => barra(`Libro ${b.n} · ${b.nome}`, `${b.lette}/${b.tot}`, pct(b.lette, b.tot))).join('')}
+      <p class="meta">Calcolato dalle pagine delle lezioni. Una pagina fatta due volte conta una volta.</p></section>
+    <section class="card"><h2>Conti alla rovescia</h2>${scadenze(ev).map((s) => cartaScadenza(s, d)).join('')}</section>
+    ${cartaSettimana(r, 'Questa settimana')}
+    <section class="card"><div class="riga"><h2>Lezioni segnate</h2><span class="meta num">${lista.length}</span></div>
+      ${lista.length ? lista.slice(0, S.ui.tutteLezioni ? 500 : 6).map((l) => `<div class="lez"><div style="min-width:0"><div class="lez-arg">${esc(l.arg)}</div><div class="meta">${giornoLungo(l.giorno)} · ${pagine(l)}${l.fonte === 'chat' ? ' · da una chat' : ''}</div></div>
+        <button class="${S.ui.confLez === l.id ? 'azione pericolo piccola' : 'tondo piccolo'}" data-a="togliLezione" data-v="${esc(l.id)}" aria-label="Togli la lezione ${esc(l.arg)}">${S.ui.confLez === l.id ? 'Togli' : ic.x}</button></div>`).join('')
+        + (lista.length > 6 && !S.ui.tutteLezioni ? '<button class="link-piccolo" data-a="tutteLezioni">Mostra tutte</button>' : '')
+        : '<p class="piccolo">Ancora nessuna lezione. Segnala qui sopra o incollala da una chat.</p>'}
+    </section>
+    <section class="card elenco"><button class="voce" data-a="apri" data-v="incolla" aria-expanded="${S.ui.aperto === 'incolla'}">Incolla lezioni da una chat${ic.dx()}</button>
+      ${S.ui.aperto === 'incolla' ? `<div class="aperto"><label class="campo">Il blocco che ti dà la chat a FINE SESSIONE<textarea id="lz-json" spellcheck="false" placeholder='{"lezioni":[{"giorno":"${d}","argomento":"…","da":12,"a":20}]}'></textarea></label><button class="azione piccola" data-a="incollaLezioni">Aggiungi</button><span class="meta" id="lz-esito"></span></div>` : ''}
+    </section>`);
+};
+function jsonDaTesto(t) {
+  const testo = String(t || '').trim();
+  try { return JSON.parse(testo); } catch { /* può arrivare dentro un blocco di codice della chat */ }
+  const i = testo.search(/[[{]/), j = Math.max(testo.lastIndexOf('}'), testo.lastIndexOf(']'));
+  if (i < 0 || j < i) throw new Error('JSON non valido: controlla virgole e parentesi.');
+  try { return JSON.parse(testo.slice(i, j + 1)); } catch { throw new Error('JSON non valido: controlla virgole e parentesi.'); }
+}
+// Aggiunge le lezioni arrivate da una chat. Lo stesso blocco incollato due volte non si duplica.
+async function aggiungiLezioniChat(data) {
+  const r = lezioniDaJson(data, oggi(), new Date().toISOString());
+  const noti = new Set(A.eventi().map((e) => e.id));
+  const nuove = r.eventi.filter((e) => !noti.has(e.id));
+  if (nuove.length) { await registra(nuove); A.sincronizza(); }
+  return { ...r, nuove: nuove.length, gia: r.eventi.length - nuove.length };
+}
+const testoLezioni = (r) => [r.nuove && `${plur(r.nuove, 'lezione aggiunta', 'lezioni aggiunte')}`, r.gia && `${plur(r.gia, 'era già segnata', 'erano già segnate')}`, r.errori.length && `scartate: ${r.errori.join(' · ')}`].filter(Boolean).join('. ');
+
 // ---------- GESTIONE ----------
 function chipStato() {
   const st = A.stato, att = A.pending.length;
@@ -699,7 +798,7 @@ VISTE.gestione = () => {
     </section>
     <section class="card elenco">
       <button class="voce" role="switch" aria-checked="${S.prefs.vibra !== false}" data-a="vibrazioni">Vibrazioni<span class="interruttore" aria-hidden="true"><i></i></span></button>
-      ${blocco('import', 'Importa carte da JSON', false, `<label class="campo">Incolla il JSON<textarea id="g-json" spellcheck="false" placeholder='{"decks":[...],"cards":[...]}'></textarea></label><button class="azione piccola" data-a="importa">Importa</button><span class="meta" id="g-esito"></span><p class="meta">Le carte con lo stesso id vengono sovrascritte: così si correggono. Serve la connessione.</p>`)}
+      ${blocco('import', 'Importa carte da JSON', false, `<label class="campo">Incolla il JSON<textarea id="g-json" spellcheck="false" placeholder='{"decks":[...],"cards":[...]}'></textarea></label><button class="azione piccola" data-a="importa">Importa</button><span class="meta" id="g-esito"></span><p class="meta">Le carte con lo stesso id vengono sovrascritte: così si correggono. Serve la connessione. Se il blocco contiene anche "lezioni", finiscono in Rotta.</p>`)}
       ${blocco('export', 'Esporta il backup', false, `<p class="meta">Mazzi, carte, progressi e sessioni in un file JSON.</p><div class="scorciatoie"><button class="azione tenue piccola" data-a="esporta">Salva il file</button><button class="azione tenue piccola" data-a="esportaCopia">Copia</button></div>`)}
       ${blocco('azzera', 'Azzera i progressi di un mazzo', true, `<p class="meta">Le carte restano, tornano nuove. Le sessioni passate restano.</p><select id="g-azz" class="selezione">${opzioniMazzi}</select><button class="azione pericolo piccola" data-a="azzera">${S.ui.confAzz ? `Sì, azzera ${esc(deckName(S.ui.confAzz))}` : 'Azzera'}</button>`)}
       ${blocco('elimina', 'Elimina un mazzo', true, `<p class="meta">Cancella il mazzo e le sue carte dal repository. Fai prima un backup.</p><select id="g-del" class="selezione">${opzioniMazzi}</select><button class="azione pericolo piccola" data-a="elimina">${S.ui.confDel ? `Sì, elimina ${esc(deckName(S.ui.confDel))}` : 'Elimina'}</button>`)}
@@ -725,6 +824,8 @@ async function importaDati(data) {
   // Carte: un file per mazzo.
   const { decks, cards, errori } = validaCarte(data, Object.keys(S.decks));
   if (errori.length) return `Non importato. ${errori.slice(0, 5).join(' · ')}${errori.length > 5 ? ` (+${errori.length - 5})` : ''}`;
+  const lz = data && !Array.isArray(data) && (data.lezioni || data.lezione) ? await aggiungiLezioniChat(data) : null;
+  if (lz && !decks.length && !cards.length && !nuoviEventi.length) return testoLezioni(lz) || 'Nessuna lezione trovata.';
   const ids = new Set([...decks.map((d) => d.id), ...cards.map((c) => c.deck)]);
   for (const id of ids) {
     const deck = decks.find((d) => d.id === id) || S.decks[id];
@@ -735,7 +836,7 @@ async function importaDati(data) {
   if (nuoviEventi.length) await A.aggiungi(nuoviEventi);
   ricalcola();
   A.sincronizza();
-  return `Importati ${plur(decks.length, 'mazzo', 'mazzi')} e ${plur(cards.length, 'carta', 'carte')}${nuoviEventi.length ? `, più ${nuoviEventi.length} eventi di progresso` : ''}.`;
+  return `Importati ${plur(decks.length, 'mazzo', 'mazzi')} e ${plur(cards.length, 'carta', 'carte')}${nuoviEventi.length ? `, più ${nuoviEventi.length} eventi di progresso` : ''}.${lz ? ` ${testoLezioni(lz)}.` : ''}`;
 }
 
 // ---------- azioni ----------
@@ -886,6 +987,44 @@ const AZ = {
     copia(testoErrori(sbagliate, r.results), 'Copiato: incollalo nella chat di correzione');
   },
   nulla() {},
+  giornoMinimo() { S.ui.flModo = null; },
+  giorno(el) { S.ui.giornoSel = el.dataset.v; route(); },
+  apriLezione() { S.ui.formLezione = { giorno: oggi() }; route(); document.getElementById('lz-arg')?.focus({ preventScroll: true }); },
+  chiudiLezione() { S.ui.formLezione = null; route(); },
+  async salvaLezione() {
+    const v = (id) => document.getElementById(id)?.value ?? '';
+    const grezza = { argomento: v('lz-arg'), giorno: v('lz-giorno') || oggi(), da: v('lz-da').trim(), a: v('lz-a').trim() };
+    const { lezione: l, errori } = validaLezione(grezza, oggi());
+    if (errori.length) { S.ui.formLezione = grezza; toast(maiusc(errori[0])); vibra.no(); return; }
+    await registra({ id: A.nuovoId(), t: 'l', at: new Date().toISOString(), giorno: l.giorno, arg: l.arg, ...(l.da != null ? { da: l.da, a: l.a } : {}), fonte: 'app' });
+    S.ui.formLezione = null; S.ui.giornoSel = l.giorno; vibra.ok(); A.sincronizza(); route(); toast('Lezione segnata');
+  },
+  async togliLezione(el) {
+    const id = el.dataset.v;
+    if (S.ui.confLez !== id) { S.ui.confLez = id; route(); return; }
+    await registra({ id: A.nuovoId(), t: 'lx', at: new Date().toISOString(), ref: id });
+    S.ui.confLez = null; A.sincronizza(); route(); toast('Lezione tolta');
+  },
+  tutteLezioni() { S.ui.tutteLezioni = true; route(); },
+  modScadenza(el) { S.ui.scadMod = el.dataset.v; route(); },
+  async salvaScadenza(el) {
+    const k = el.dataset.v, data = document.getElementById(`sc-data-${k}`)?.value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) { toast('Scegli un giorno'); return; }
+    await registra({ id: A.nuovoId(), t: 'sc', at: new Date().toISOString(), chiave: k, data });
+    S.ui.scadMod = null; A.sincronizza(); route();
+  },
+  async togliScadenza(el) {
+    await registra({ id: A.nuovoId(), t: 'sc', at: new Date().toISOString(), chiave: el.dataset.v, data: null });
+    S.ui.scadMod = null; A.sincronizza(); route();
+  },
+  async incollaLezioni() {
+    const esito = document.getElementById('lz-esito');
+    let data;
+    try { data = jsonDaTesto(document.getElementById('lz-json').value); } catch (e) { esito.textContent = e.message; return; }
+    const r = await aggiungiLezioniChat(data);
+    const m = r.trovate ? testoLezioni(r) : 'Nessuna lezione nel blocco.';
+    if (r.nuove) { S.ui.aperto = null; route(); toast(m); } else esito.textContent = m;
+  },
   vibrazioni() { S.prefs.vibra = S.prefs.vibra === false; impostaVibrazioni(S.prefs.vibra); salvaPrefs(); if (S.prefs.vibra) vibra.ok(); route(); },
   risPreset(el) { S.ui.risPreset = el.dataset.v; S.ui.punto = null; route(); },
   punto(el) { S.ui.punto = Number(el.dataset.v); route(); },
@@ -915,7 +1054,7 @@ const AZ = {
   async importa() {
     const esito = document.getElementById('g-esito');
     let data;
-    try { data = JSON.parse(document.getElementById('g-json').value); } catch { esito.textContent = 'JSON non valido: controlla virgole e parentesi.'; return; }
+    try { data = jsonDaTesto(document.getElementById('g-json').value); } catch (e) { esito.textContent = e.message; return; }
     esito.textContent = 'Importo…';
     try { const m = await importaDati(data); S.ui.aperto = 'import'; route(); toast(m); document.getElementById('g-esito').textContent = m; } catch (e) { esito.textContent = e.message; }
   },
@@ -970,6 +1109,10 @@ A.onChange = (cambiato) => {
   const v = S.ui.vista;
   if (inProva) return; // mai ridisegnare sotto le dita durante una sessione
   if (v === 'oggi' || v === 'mazzi' || v === 'risultati') { if (cambiato || A.stato.fase === 'errore' || A.stato.fase === 'offline') route(); }
+  else if (v === 'rotta') {
+    const scrive = S.ui.formLezione || S.ui.scadMod || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.getElementById('lz-json')?.value;
+    if (!scrive && (cambiato || A.stato.fase === 'errore' || A.stato.fase === 'offline')) route();
+  }
   else if (v === 'gestione') {
     // Non cancellare quello che stai scrivendo mentre la sincronizzazione lavora in sottofondo.
     const scrive = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.getElementById('g-json')?.value;

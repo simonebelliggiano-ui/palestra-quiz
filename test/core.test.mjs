@@ -5,6 +5,7 @@ import {
   PRESETS, preparaSimulazione, calcolaPunteggio, ricostruisci, unisciEventi, applicaVoto, romeDate, addDays,
   ripartisci, validaCarte, eventiInTesto, testoInEventi, percorsoRegistro, materiaKey, prossimoRitorno,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili,
+  lunedi, lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, lezioniDaJson, MANUALE,
 } from '../js/core.js';
 
 const MAT = { o: 'Ordinamento dell\'Agenzia delle Entrate', d: 'Diritto amministrativo', p: 'Pubblico impiego', i: 'Informatica', e: 'Inglese', s: 'ASMEL specifiche', c: 'ASMEL comuni', m: 'Metodo' };
@@ -163,4 +164,104 @@ test('Scrivere: rodaggio, più di 3 errori o esitazioni sommati nei due sensi', 
   const ev = [v('cf-37', 0), v('cf-q37', 0), v('cf-37', 2, 4000), v('cf-q37', 2, 1000), v('cf-40', 0), v('cf-40', 0), v('cf-40', 0)];
   assert.deepEqual(paroleDifficili(ev, cards), []);
   assert.deepEqual(paroleDifficili([...ev, v('cf-37', 0, 0, 'flash')], cards), [{ numero: '37', parola: 'mucca', volte: 4 }]);
+});
+
+// ---------- Rotta ----------
+// Ore 12 italiane del giorno g: così il giorno non dipende dal fuso del computer che fa le prove.
+const ora = (g, h = 12) => new Date(`${g}T${String(h - 1).padStart(2, '0')}:00:00Z`).toISOString();
+let nid = 0;
+const ses = (g, extra = {}) => ({ id: `s${nid++}`, t: 's', at: ora(g), kind: 'flash', total: 10, right: 8, ...extra });
+const voti = (g, n, c = null) => Array.from({ length: n }, (_, i) => ({ id: `v${nid++}`, t: 'v', at: ora(g), c: c || `c${i}`, d: 'd', g: 2, k: 'flash' }));
+const lez = (g, da, a, extra = {}) => ({ id: `l${nid++}`, t: 'l', at: ora(g), giorno: g, arg: 'L. 241/1990', ...(da ? { da, a } : {}), ...extra });
+
+test('Rotta: lunedì e venti settimane fino alla domenica di questa settimana', () => {
+  assert.equal(lunedi('2026-11-08'), '2026-11-02'); // domenica
+  assert.equal(lunedi('2026-11-02'), '2026-11-02');
+  const c = catena([], '2026-11-04');
+  assert.equal(c.giorni.length, 140);
+  assert.equal(c.giorni[0].giorno, addDays('2026-11-02', -133));
+  assert.equal(c.giorni.at(-1).giorno, '2026-11-08');
+  assert.ok(c.giorni.at(-1).futuro && !c.giorni.find((g) => g.giorno === '2026-11-04').futuro);
+});
+test('Rotta: chiaro con una sessione o 10 risposte, pieno con una lezione', () => {
+  const ev = [ses('2026-11-02'), ...voti('2026-11-03', 10), ...voti('2026-11-04', 9), lez('2026-11-05')];
+  const c = catena(ev, '2026-11-06'), liv = (g) => c.giorni.find((x) => x.giorno === g).livello;
+  assert.deepEqual(['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'].map(liv), [1, 1, 0, 2, 0]);
+});
+test('Rotta: la serie resta viva fino a stasera, il record ricorda la corsa più lunga', () => {
+  const ev = [ses('2026-10-01'), ses('2026-10-02'), ses('2026-10-03'), ses('2026-10-04'), ses('2026-11-06'), ses('2026-11-07')];
+  let c = catena(ev, '2026-11-08');
+  assert.equal(c.serie, 2, 'oggi ancora niente: conta da ieri');
+  assert.equal(c.record, 4);
+  c = catena([...ev, ses('2026-11-08')], '2026-11-08');
+  assert.equal(c.serie, 3);
+  c = catena(ev, '2026-11-09');
+  assert.equal(c.serie, 0, 'saltato un giorno intero: la serie si rompe');
+});
+test('Rotta: il giorno si calcola in ora italiana', () => {
+  // 22:30 UTC è lunedì alle 23:30 in Italia; 23:30 UTC è già martedì alle 00:30.
+  const e = { id: 'z', t: 's', at: '2026-11-02T22:30:00Z', kind: 'flash' };
+  assert.equal(catena([e], '2026-11-03').giorni.find((g) => g.giorno === '2026-11-02').livello, 1);
+  assert.equal(catena([{ ...e, at: '2026-11-02T23:30:00Z' }], '2026-11-03').giorni.find((g) => g.giorno === '2026-11-03').livello, 1);
+});
+test('Rotta: regola dei due giorni', () => {
+  assert.equal(regolaDueGiorni([], '2026-11-08'), null, 'nessuna storia: nessun richiamo');
+  assert.equal(regolaDueGiorni([ses('2026-11-07')], '2026-11-08'), null);
+  assert.equal(regolaDueGiorni([ses('2026-11-05')], '2026-11-08'), 'minimo');
+  assert.equal(regolaDueGiorni([ses('2026-11-05'), ses('2026-11-08')], '2026-11-08'), 'salva');
+});
+test('Rotta: lezioni cancellate spariscono, il giorno della chat vale più dell\'ora di incollaggio', () => {
+  const a = lez('2026-11-05', 1, 10), b = { ...lez('2026-11-04', 11, 20), at: ora('2026-11-07') };
+  const lista = lezioni([a, b, { id: 'x1', t: 'lx', at: ora('2026-11-07'), ref: a.id }]);
+  assert.deepEqual(lista.map((l) => l.giorno), ['2026-11-04']);
+  assert.equal(catena([b], '2026-11-07').giorni.find((g) => g.giorno === '2026-11-04').livello, 2);
+});
+test('Rotta: avanzamento del manuale senza contare due volte le stesse pagine', () => {
+  const r = avanzamentoManuale([{ da: 1, a: 20 }, { da: 15, a: 30 }, { da: 180, a: 190 }, { da: null, a: null }, { da: 300, a: 400 }]);
+  assert.equal(r.tot, 306);
+  assert.equal(r.lette, 30 + 11 + 7);
+  assert.deepEqual(r.libri.map((b) => [b.lette, b.tot]), [[33, 182], [8, 34], [0, 28], [7, 62]]);
+  assert.equal(MANUALE.libri.reduce((t, b) => t + b.a - b.da + 1, 0), 306);
+});
+test('Rotta: riepilogo della settimana da lunedì a domenica', () => {
+  const ev = [ses('2026-11-01'), ...voti('2026-11-01', 5), ses('2026-11-02'), ...voti('2026-11-03', 12), lez('2026-11-04', 1, 5),
+    ses('2026-10-20', { kind: 'sim', preset: 'ade', score: 18.5 }), ses('2026-11-05', { kind: 'sim', preset: 'ade', score: 21.1 })];
+  const r = riepilogoSettimana(ev, '2026-11-08');
+  assert.equal(r.da, '2026-11-02'); assert.equal(r.a, '2026-11-08');
+  assert.equal(r.attivi, 4);
+  assert.equal(r.lezioni, 1);
+  assert.equal(r.carte, 12);
+  assert.equal(r.risposte, 12);
+  const stessa = riepilogoSettimana([...voti('2026-11-03', 5, 'uguale')], '2026-11-08');
+  assert.deepEqual([stessa.carte, stessa.risposte], [1, 5], 'la stessa carta rifatta 5 volte conta una carta');
+  assert.equal(r.ultimaSim.score, 21.1);
+});
+test('Rotta: conti alla rovescia con giorno, mese o data da fissare', () => {
+  let s = scadenze([]);
+  assert.deepEqual(s.map((x) => [x.chiave, x.data]), [['asmel', '2027-01'], ['ade335', null]]);
+  assert.deepEqual(quantoManca('2027-01', '2026-11-08'), { giorni: 54, almeno: true });
+  assert.deepEqual(quantoManca('2027-01-20', '2026-11-08'), { giorni: 73, almeno: false });
+  assert.equal(quantoManca(null, '2026-11-08'), null);
+  s = scadenze([{ id: 'a', t: 'sc', at: ora('2026-11-08', 9), chiave: 'ade335', data: '2027-03-15' }, { id: 'b', t: 'sc', at: ora('2026-11-08', 10), chiave: 'asmel', data: '2027-01-31' }, { id: 'c', t: 'sc', at: ora('2026-11-08', 11), chiave: 'asmel', data: 'gennaio' }]);
+  assert.deepEqual(s.map((x) => x.data), ['2027-01-31', '2027-03-15'], 'una data scritta male non sovrascrive quella buona');
+  s = scadenze([{ id: 'd', t: 'sc', at: ora('2026-11-09'), chiave: 'ade335', data: null }]);
+  assert.equal(s[1].data, null); assert.equal(s[1].nota, 'Quando esce il bando');
+});
+test('Rotta: lezioni incollate da una chat, controllate e senza doppioni', () => {
+  const at = ora('2026-11-08');
+  const r = lezioniDaJson({ lezioni: [{ giorno: '2026-11-07', argomento: 'Responsabile del procedimento', da: 12, a: 20 }, { argomento: 'Ripasso generale' }, { argomento: 'x', da: 30, a: 10 }, { argomento: 'y', da: 5 }, { giorno: '2026-11-09', argomento: 'z' }, { argomento: '' }] }, '2026-11-08', at);
+  assert.equal(r.trovate, 6);
+  assert.equal(r.eventi.length, 2);
+  assert.equal(r.errori.length, 4);
+  assert.deepEqual([r.eventi[0].giorno, r.eventi[0].da, r.eventi[0].a, r.eventi[0].fonte], ['2026-11-07', 12, 20, 'chat']);
+  assert.equal(r.eventi[1].giorno, '2026-11-08'); assert.ok(!('da' in r.eventi[1]));
+  const di_nuovo = lezioniDaJson({ lezione: { giorno: '2026-11-07', argomento: 'Responsabile del procedimento', da: 12, a: 20 } }, '2026-11-08', ora('2026-11-09'));
+  assert.equal(di_nuovo.eventi[0].id, r.eventi[0].id, 'stesso testo, stesso id');
+  assert.equal(unisciEventi(r.eventi, di_nuovo.eventi).length, 2);
+  assert.equal(lezioniDaJson({ decks: [], cards: [] }, '2026-11-08', at).trovate, 0);
+});
+test('Rotta: i nuovi eventi non toccano progressi e sessioni', () => {
+  const ev = [lez('2026-11-04', 1, 5), { id: 'k', t: 'sc', at: ora('2026-11-04'), chiave: 'asmel', data: '2027-01-20' }, { id: 'q', t: 'lx', at: ora('2026-11-05'), ref: 'nessuna' }];
+  const r = ricostruisci(ev);
+  assert.deepEqual(r.progress, {}); assert.deepEqual(r.sessions, []);
 });
