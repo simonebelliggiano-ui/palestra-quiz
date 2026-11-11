@@ -1,7 +1,7 @@
 // Palestra Quiz: schermate e azioni. La logica sta in core.js, i dati in store.js.
 import {
   PRESETS, MATERIE, ORDINE_MATERIE, romeDate, daysBetween, materiaKey, preparaSimulazione, calcolaPunteggio, ricostruisci,
-  inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, fmt, fmtMin, mmss,
+  inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, ordineOpzioni, fmt, fmtMin, mmss,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili, LIMITE_MS,
   lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, validaLezione, lezioniDaJson,
   SETTIMANE_CATENA, RISPOSTE_GIORNO_MINIMO, palestraDi, statCodice,
@@ -287,7 +287,7 @@ function corpoFronte(c, reveal, pick) {
   const numero = /^\d{1,3}( \d{1,3})?$/.test(String(c.front).trim()); // un numero, o una coppia come 01 51
   const trap = c.tags?.includes('trappola') ? '<span class="pill warn">trappola</span>' : '';
   const testa = `<div class="mazzo">${esc(deckName(c.deck))}${trap}</div>`;
-  const opzioni = c.kind === 'quiz' ? `<div class="opzioni">${(c.options || []).map((o, i) => opzione(c, o, i, reveal, pick, 'flPick')).join('')}</div>` : '';
+  const opzioni = c.kind === 'quiz' ? `<div class="opzioni">${inOrdine(c, S.run?.started ?? 0, (o, i, pos) => opzione(c, o, i, reveal, pick, 'flPick', pos))}</div>` : '';
   if (!reveal) {
     const lunga = String(c.front).length > 110 || c.kind === 'quiz';
     return { testa, html: `<p class="fronte ${numero ? 'numero' : lunga ? 'lunga' : ''}">${esc(c.front)}</p>${opzioni}` };
@@ -297,8 +297,10 @@ function corpoFronte(c, reveal, pick) {
     ${c.why ? `<div class="perche"><p>${esc(c.why)}</p></div>` : ''}${c.mnem ? immagine(c.mnem) : ''}` };
 }
 const immagine = (t) => `<div class="imm"><div class="t">${ic.lamp}Immagine</div><p>${esc(t)}</p></div>`;
-function opzione(c, o, i, reveal, pick, azione) {
-  const lett = 'ABCD'[i] || String(i + 1);
+// Le opzioni si mostrano mescolate (ordineOpzioni): "i" è l'indice vero, "pos" la posizione a schermo.
+const inOrdine = (c, seme, fn) => ordineOpzioni(c.id, seme, (c.options || []).length).map((i, pos) => fn(c.options[i], i, pos)).join('');
+function opzione(c, o, i, reveal, pick, azione, pos = i) {
+  const lett = 'ABCD'[pos] || String(pos + 1);
   let cl = '', tag = '';
   if (reveal && i === c.answer) { cl = 'giusta'; tag = `<small>${ic.ok()}Giusta</small>`; }
   else if (reveal && i === pick) { cl = 'errata'; tag = `<small>${ic.no}La tua</small>`; }
@@ -355,7 +357,7 @@ function schermoQuiz() {
   mostra(`${testaSessione(`Domanda ${r.i + 1} di ${r.queue.length} · ${plur(giuste, 'giusta', 'giuste')}`, 'fermaQuiz', ((r.i + (risposto ? 1 : 0)) / r.queue.length) * 100)}
     ${trap ? `<div>${trap}</div>` : ''}
     <p class="quesito">${esc(c.front)}</p>
-    <div class="opzioni">${(c.options || []).map((o, i) => opzione(c, o, i, risposto, r.pick, 'qzPick')).join('')}</div>
+    <div class="opzioni">${inOrdine(c, r.started, (o, i, pos) => opzione(c, o, i, risposto, r.pick, 'qzPick', pos))}</div>
     ${risposto ? `<div class="perche"><div class="t ${r.pick === c.answer ? 'giusto' : 'sbagliato'}">${r.pick === c.answer ? 'Giusto' : 'Sbagliato'}</div>${c.why ? `<p>${esc(c.why)}</p>` : ''}</div>${c.mnem ? immagine(c.mnem) : ''}${c.ref ? `<div class="rif">${esc(c.ref)}</div>` : ''}
       <div class="piede"><button class="azione" data-a="qzAvanti">${r.i + 1 < r.queue.length ? 'Avanti' : 'Vedi il risultato'}</button></div>` : ''}`);
 }
@@ -418,7 +420,7 @@ function prova() {
     </div>
     <div class="riga num" style="padding:0 4px;font-size:14px;line-height:20px;font-weight:700"><span>Domanda ${r.i + 1} di ${tot}</span><span style="font-weight:500;color:var(--ink2)">${date} date · ${tot - date} non date</span></div>
     ${c ? `<article class="quesito-box">${esc(c.front)}</article>
-    <div class="opzioni" role="radiogroup" aria-label="Risposte" style="gap:8px">${(c.options || []).map((o, i) => `<button class="opz grande ${pick === i ? 'scelta' : ''}" role="radio" aria-checked="${pick === i}" data-a="simPick" data-v="${i}"><b>${'ABCD'[i] || i + 1}</b><span>${esc(o)}</span></button>`).join('')}</div>` : '<div class="card vuoto">Questa carta non esiste più.</div>'}
+    <div class="opzioni" role="radiogroup" aria-label="Risposte" style="gap:8px">${inOrdine(c, r.started, (o, i, pos) => `<button class="opz grande ${pick === i ? 'scelta' : ''}" role="radio" aria-checked="${pick === i}" data-a="simPick" data-v="${i}"><b>${'ABCD'[pos] || pos + 1}</b><span>${esc(o)}</span></button>`)}</div>` : '<div class="card vuoto">Questa carta non esiste più.</div>'}
     <div class="piede" style="gap:10px;align-items:center">
       <button class="freccia" data-a="simPrec" aria-label="Domanda precedente" ${r.i === 0 ? 'disabled' : ''}>${ic.sn}</button>
       <button class="bianco" data-a="simBianco">Lascia in bianco</button>
@@ -509,7 +511,7 @@ function correzioneSim() {
       const stato = x.st === 'right' ? '<span class="pill ok">Giusta</span>' : x.st === 'wrong' ? '<span class="pill bad">Sbagliata</span>' : '<span class="pill neutra">In bianco</span>';
       return `<article class="card"><div class="riga" style="align-items:center"><span class="meta num">${i + 1} · ${esc(deckName(c.deck))}</span>${stato}</div>
         <p style="font-size:15px;line-height:22px;font-weight:600;overflow-wrap:anywhere">${esc(c.front)}</p>
-        <div class="opzioni">${(c.options || []).map((o, j) => opzione(c, o, j, true, x.pick, 'nulla')).join('')}</div>
+        <div class="opzioni">${inOrdine(c, r.started, (o, j, pos) => opzione(c, o, j, true, x.pick, 'nulla', pos))}</div>
         ${c.why ? `<p class="piccolo">${esc(c.why)}</p>` : ''}${c.mnem ? immagine(c.mnem) : ''}${c.ref ? `<div class="rif">${esc(c.ref)}</div>` : ''}</article>`;
     }).join('')}
     <div class="piede"><button class="azione" data-a="chiudiCorrezione">Torna all'esito</button></div>`);

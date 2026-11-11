@@ -6,7 +6,7 @@ import {
   ripartisci, validaCarte, eventiInTesto, testoInEventi, percorsoRegistro, materiaKey, prossimoRitorno,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili,
   lunedi, lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, lezioniDaJson, MANUALE,
-  palestraDi, statCodice,
+  palestraDi, statCodice, ordineOpzioni,
 } from '../js/core.js';
 
 const MAT = { o: 'Ordinamento dell\'Agenzia delle Entrate', d: 'Diritto amministrativo', p: 'Pubblico impiego', i: 'Informatica', e: 'Inglese', s: 'ASMEL specifiche', c: 'ASMEL comuni', m: 'Metodo' };
@@ -323,4 +323,17 @@ test('Codice: parole fissate, tempi e più lente', () => {
   assert.ok(pausa.medioMs < 3000, 'una pausa di 30 secondi non falsa il tempo tipico');
   assert.ok(!pausa.lente.some((x) => x.numero === '02'), 'una parola lenta una volta sola non è tra le più lente');
   assert.deepEqual(r.lente.map((x) => [x.numero, x.parola, x.ms]), [['13', 'Tom', 3200]]);
+});
+
+test('ordineOpzioni: permutazione valida, ferma nella sessione, diversa tra sessioni', () => {
+  const a = ordineOpzioni('ade-natura-001', 1000, 3);
+  assert.deepEqual([...a].sort(), [0, 1, 2]);
+  assert.deepEqual(ordineOpzioni('ade-natura-001', 1000, 3), a);
+  const visti = new Set();
+  for (let s = 0; s < 60; s++) visti.add(ordineOpzioni('ade-natura-001', s, 3).join(''));
+  assert.ok(visti.size >= 5, `ordini diversi: ${visti.size}`);
+  const primi = [0, 0, 0];
+  for (let s = 0; s < 3000; s++) primi[ordineOpzioni('x', s, 3)[0]]++;
+  for (const n of primi) assert.ok(n > 800 && n < 1200, `distribuzione: ${primi}`);
+  assert.deepEqual(ordineOpzioni('y', 1, 0), []);
 });

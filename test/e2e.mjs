@@ -170,7 +170,7 @@ await clic(pc.page, 'tuttiMazzi');
 await pc.page.locator('[data-a="toggleMazzo"]', { hasText: 'Informatica' }).click();
 await clic(pc.page, 'iniziaQuiz');
 for (let i = 0; i < 4; i++) {
-  await pc.page.locator('.opz').nth(i === 1 ? 1 : 0).click();
+  await pc.page.locator(`.opz[data-v="${i === 1 ? 1 : 0}"]`).click();
   if (i === 1) await foto(pc.page, '30-pc-quiz');
   await clic(pc.page, 'qzAvanti').catch(() => {});
   await pc.page.waitForTimeout(40);
@@ -274,7 +274,7 @@ ok(r.ends - r.started === 3600000, '60 minuti');
 await foto(tel.page, '21-sim-prova');
 // 34 giuste, 9 sbagliate, 7 in bianco.
 for (let i = 0; i < 43; i++) {
-  await tel.page.locator('.opz').nth(i < 34 ? 0 : 1).click();
+  await tel.page.locator(`.opz[data-v="${i < 34 ? 0 : 1}"]`).click();
   await tel.page.waitForFunction((n) => document.querySelector('.riga span')?.textContent === `Domanda ${n} di 50`, i + 2);
   if (i === 16) { await tel.page.locator('[data-a="segna"]').click(); }
 }
@@ -519,7 +519,7 @@ await tel.page.goto(`${BASE}#quiz`);
 await foto(tel.page, '16-quiz-scelta');
 await clic(tel.page, 'tuttiMazzi');
 await clic(tel.page, 'iniziaQuiz');
-await tel.page.locator('.opz').nth(2).click();
+await tel.page.locator('.opz[data-v="2"]').click();
 await tel.page.waitForTimeout(600);
 await foto(tel.page, '17-quiz-correzione');
 await senzaSforamenti(tel.page, 'Quiz');

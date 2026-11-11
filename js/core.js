@@ -80,6 +80,22 @@ export const shuffle = (a, rnd = Math.random) => {
   return a;
 };
 
+// Ordine in cui mostrare le opzioni di una carta: cambia da una sessione all'altra,
+// ma resta fermo dentro la stessa sessione (anche quando lo schermo si ridisegna).
+// Restituisce gli indici originali nell'ordine di visualizzazione: la risposta resta legata all'indice vero.
+export function ordineOpzioni(id, seme, n) {
+  let h = 2166136261 >>> 0;
+  for (const ch of `${id}|${seme}`) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  const rnd = () => {
+    h = (h + 0x6D2B79F5) >>> 0;
+    let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return shuffle([...Array(Math.max(0, n)).keys()], rnd);
+}
+
 // Divide "totale" in parti proporzionali ai pesi, con somma esatta (metodo dei resti più grandi).
 export function ripartisci(pesi, totale) {
   const somma = pesi.reduce((a, b) => a + b, 0);
