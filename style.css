@@ -10,7 +10,7 @@
   --warn-mark: #C9781A; --bad-mark: #C2502B; --img: #7A3E9D; --img-bg: #F3EAFB;
   --glass: rgba(255,255,255,.78); --shadow: 0 8px 22px rgba(62,92,160,.08);
   --sa: env(safe-area-inset-top, 0px); --top: max(var(--sa), 12px); --bottom: env(safe-area-inset-bottom, 0px);
-  --fondo-alto: #6F95D6; --fondo-1: #A9C6EC; --fondo-2: #DCE8F7; --fondo-basso: #B9D0EF;
+  --fondo-alto: #6F95D6; --fondo-1: #A9C6EC; --fondo-2: #DCE8F7; --fondo-basso: #C6D1EE;
 }
 /* App installata sul telefono: all'avvio iOS a volte dà 0 come spazio della barra di stato.
    Così il contenuto finiva sotto la Dynamic Island. Con un minimo il saluto resta sempre visibile. */
@@ -20,11 +20,13 @@
 /* Palestra del codice: stessa app, tinta viola, così si capisce sempre dove sei. */
 :root[data-palestra="codice"] {
   --blue: #7A3E9D; --blue-ink: #6A2F8C; --blue-soft: #F3EAFB; --tile-blue: #7A3E9D;
-  --fondo-alto: #A57CC9; --fondo-1: #CDB6E6; --fondo-2: #EDE3F7; --fondo-basso: #DCCBEE;
+  --fondo-alto: #A57CC9; --fondo-1: #CDB6E6; --fondo-2: #EDE3F7;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: #F6F6F5; color: var(--ink); font-family: Manrope, system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
+/* iOS 26, app sulla schermata Home: in basso resta una striscia che la pagina non può disegnare
+   (WebKit bug 301994). iOS la colora con il fondo della pagina: lo stesso colore del fondo sfumato, in tutte e due le palestre. */
+body { margin: 0; background: #C6D1EE; color: var(--ink); font-family: Manrope, system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
 body::before { content: ""; position: fixed; inset: 0 0 -160px; z-index: -1; transition: background .3s; background: linear-gradient(180deg, var(--fondo-alto) 0, var(--fondo-1) var(--sa), var(--fondo-2) calc(var(--sa) + 120px), #F6F6F5 calc(var(--sa) + 260px), #F6F6F5 calc(100% - 372px), var(--fondo-2) calc(100% - 242px), var(--fondo-basso) calc(100% - 160px), var(--fondo-basso) 100%); }
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
