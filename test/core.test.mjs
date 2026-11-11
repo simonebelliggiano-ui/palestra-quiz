@@ -6,6 +6,7 @@ import {
   ripartisci, validaCarte, eventiInTesto, testoInEventi, percorsoRegistro, materiaKey, prossimoRitorno,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili,
   lunedi, lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, lezioniDaJson, MANUALE,
+  palestraDi, statCodice,
 } from '../js/core.js';
 
 const MAT = { o: 'Ordinamento dell\'Agenzia delle Entrate', d: 'Diritto amministrativo', p: 'Pubblico impiego', i: 'Informatica', e: 'Inglese', s: 'ASMEL specifiche', c: 'ASMEL comuni', m: 'Metodo' };
@@ -170,7 +171,7 @@ test('Scrivere: rodaggio, più di 3 errori o esitazioni sommati nei due sensi', 
 // Ore 12 italiane del giorno g: così il giorno non dipende dal fuso del computer che fa le prove.
 const ora = (g, h = 12) => new Date(`${g}T${String(h - 1).padStart(2, '0')}:00:00Z`).toISOString();
 let nid = 0;
-const ses = (g, extra = {}) => ({ id: `s${nid++}`, t: 's', at: ora(g), kind: 'flash', total: 10, right: 8, ...extra });
+const ses = (g, extra = {}) => ({ id: `s${nid++}`, t: 's', at: ora(g), kind: 'flash', total: 10, right: 8, answers: [{ c: 'da-fonti-001', ok: true }], ...extra });
 const voti = (g, n, c = null) => Array.from({ length: n }, (_, i) => ({ id: `v${nid++}`, t: 'v', at: ora(g), c: c || `c${i}`, d: 'd', g: 2, k: 'flash' }));
 const lez = (g, da, a, extra = {}) => ({ id: `l${nid++}`, t: 'l', at: ora(g), giorno: g, arg: 'L. 241/1990', ...(da ? { da, a } : {}), ...extra });
 
@@ -200,7 +201,7 @@ test('Rotta: la serie resta viva fino a stasera, il record ricorda la corsa più
 });
 test('Rotta: il giorno si calcola in ora italiana', () => {
   // 22:30 UTC è lunedì alle 23:30 in Italia; 23:30 UTC è già martedì alle 00:30.
-  const e = { id: 'z', t: 's', at: '2026-11-02T22:30:00Z', kind: 'flash' };
+  const e = { id: 'z', t: 's', at: '2026-11-02T22:30:00Z', kind: 'flash', answers: [{ c: 'da-fonti-001', ok: true }] };
   assert.equal(catena([e], '2026-11-03').giorni.find((g) => g.giorno === '2026-11-02').livello, 1);
   assert.equal(catena([{ ...e, at: '2026-11-02T23:30:00Z' }], '2026-11-03').giorni.find((g) => g.giorno === '2026-11-03').livello, 1);
 });
@@ -264,4 +265,62 @@ test('Rotta: i nuovi eventi non toccano progressi e sessioni', () => {
   const ev = [lez('2026-11-04', 1, 5), { id: 'k', t: 'sc', at: ora('2026-11-04'), chiave: 'asmel', data: '2027-01-20' }, { id: 'q', t: 'lx', at: ora('2026-11-05'), ref: 'nessuna' }];
   const r = ricostruisci(ev);
   assert.deepEqual(r.progress, {}); assert.deepEqual(r.sessions, []);
+});
+
+// ---------- Due palestre ----------
+test('Palestre: un mazzo è del codice se è "Metodo" o comincia con cf-', () => {
+  assert.equal(palestraDi({ id: 'cf-parole-0', materia: 'Metodo' }), 'codice');
+  assert.equal(palestraDi({ id: 'cf-nuovo', materia: 'Altro' }), 'codice');
+  assert.equal(palestraDi({ id: 'met-x', materia: 'Metodo' }), 'codice');
+  assert.equal(palestraDi({ id: 'da-fonti', materia: 'Diritto amministrativo' }), 'materie');
+  assert.equal(palestraDi({ id: 'x' }), 'materie');
+});
+test('Rotta: un giorno di solo codice non conta, ma resta segnato', () => {
+  const cod = (g, n) => Array.from({ length: n }, (_, i) => ({ id: `k${nid++}`, t: 'v', at: ora(g), c: `cf-parole-0-00${i}`, d: 'cf-parole-0', g: 2, k: 'scrivi' }));
+  const ev = [
+    ...cod('2026-11-02', 40), { id: 'sc1', t: 's', at: ora('2026-11-02'), kind: 'scrivi', answers: [{ c: 'cf-parole-0-001', ok: true }] },
+    { id: 'fl1', t: 's', at: ora('2026-11-03'), kind: 'flash', answers: [{ c: 'cf-parole-1-001', ok: true }] },
+    ...cod('2026-11-04', 5), ...voti('2026-11-04', 10),
+    { id: 'mix', t: 's', at: ora('2026-11-05'), kind: 'flash', answers: [{ c: 'cf-parole-1-001', ok: true }, { c: 'da-fonti-002', ok: false }] },
+  ];
+  const c = catena(ev, '2026-11-05'), g = (x) => c.giorni.find((y) => y.giorno === x);
+  assert.deepEqual(['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05'].map((x) => g(x).livello), [0, 0, 1, 1]);
+  assert.equal(g('2026-11-02').codice, 40, 'il codice si vede anche se non conta');
+  assert.equal(g('2026-11-04').risposte, 10);
+  assert.equal(c.serie, 2); assert.equal(c.record, 2);
+  // Con l'elenco vero dei mazzi: un mazzo "Metodo" senza prefisso cf- è codice.
+  const opz = { codice: (d) => d === 'met-x', mazzoDi: (id) => (id.startsWith('met-x') ? 'met-x' : id) };
+  const c2 = catena([{ id: 'm1', t: 's', at: ora('2026-11-05'), kind: 'flash', answers: [{ c: 'met-x-001', ok: true }] }], '2026-11-05', 20, opz);
+  assert.equal(c2.giorni.find((y) => y.giorno === '2026-11-05').livello, 0);
+  assert.equal(regolaDueGiorni(cod('2026-11-04', 30), '2026-11-06'), null, 'solo codice nella storia: nessun richiamo');
+  const r = riepilogoSettimana(ev, '2026-11-08');
+  assert.equal(r.attivi, 2); assert.equal(r.risposte, 10, 'nel riepilogo contano solo le carte delle materie');
+});
+test('Codice: parole fissate, tempi e più lente', () => {
+  const cards = {};
+  const coppia = (n, parola) => {
+    cards[`cf-${n}-np`] = { id: `cf-${n}-np`, deck: 'cf', kind: 'flash', front: n, back: parola, tags: ['numero-parola'] };
+    cards[`cf-${n}-pn`] = { id: `cf-${n}-pn`, deck: 'cf', kind: 'quiz', front: `Che numero è "${parola}"?`, options: [n, '99', '98', '97'], answer: 0, tags: ['parola-numero'] };
+  };
+  coppia('01', 'Sid'); coppia('02', 'zanna'); coppia('13', 'Tom'); coppia('5', 'aglio');
+  const sc = (c, g, ms, giorno, h = 12) => ({ id: `w${nid++}`, t: 'v', at: ora(giorno, h), c, d: 'cf', g, k: 'scrivi', ms });
+  const ev = [
+    sc('cf-01-np', 2, 900, '2026-11-08'), sc('cf-01-pn', 2, 1500, '2026-11-08'), // fissata
+    sc('cf-02-np', 2, 900, '2026-11-08'), sc('cf-02-pn', 2, 2600, '2026-11-08'), // lenta in un senso: non fissata
+    sc('cf-13-np', 2, 3000, '2026-11-07'), sc('cf-13-np', 2, 3400, '2026-11-08'), sc('cf-13-pn', 0, 1200, '2026-11-08'),
+    sc('cf-5-np', 2, 800, '2026-10-01'), sc('cf-5-pn', 2, 800, '2026-10-01'), // fissata, fuori dalla settimana
+    sc('cf-01-np', 0, 500, '2026-11-01'), // vecchia e sbagliata: conta l'ultima
+  ];
+  const r = statCodice(ev, cards, '2026-11-08');
+  assert.equal(r.parole, 4); assert.equal(r.fissate, 2);
+  assert.deepEqual([r.decine[0].tot, r.decine[0].fissate, r.decine[0].iniziata, r.decine[1].fissate, r.decine[2].iniziata], [2, 1, true, 0, false]);
+  assert.equal(r.iniziate, 2);
+  assert.equal(r.perGiorno.length, 7); assert.equal(r.perGiorno.at(-1).giorno, '2026-11-08');
+  assert.equal(r.perGiorno.at(-1).ms, 1500, 'tempo tipico (mediana); le sbagliate non contano');
+  assert.equal(r.perGiorno.at(-2).ms, 3000); assert.equal(r.perGiorno[0].ms, null);
+  assert.equal(r.perSenso.pn, Math.round((1500 + 2600) / 2));
+  const pausa = statCodice([...ev, sc('cf-01-np', 2, 30000, '2026-11-08', 13)], cards, '2026-11-08');
+  assert.ok(pausa.medioMs < 3000, 'una pausa di 30 secondi non falsa il tempo tipico');
+  assert.ok(!pausa.lente.some((x) => x.numero === '02'), 'una parola lenta una volta sola non è tra le più lente');
+  assert.deepEqual(r.lente.map((x) => [x.numero, x.parola, x.ms]), [['13', 'Tom', 3200]]);
 });

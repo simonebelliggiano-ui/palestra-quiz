@@ -319,6 +319,59 @@ export function paroleDifficili(eventi, cards) {
   return [...conti.values()].filter((r) => r.volte > 3).sort((a, b) => b.volte - a.volte);
 }
 
+// ---------- Due palestre: materie del concorso e codice fonetico ----------
+// Un mazzo è del codice se la sua materia è "Metodo" o se il suo id comincia con "cf-".
+export const palestraDi = (deck) => (materiaKey(deck?.materia) === 'metodo' || String(deck?.id || '').startsWith('cf-') ? 'codice' : 'materie');
+// Senza l'elenco dei mazzi basta il prefisso: gli id delle carte cominciano con l'id del mazzo.
+const codicePerPrefisso = (id) => String(id || '').startsWith('cf-');
+
+// Statistiche dello Scrivi a memoria per la palestra del codice.
+// Una parola è "fissata" se l'ultima volta l'hai scritta giusta e in meno di 2 secondi, in tutti e due i sensi.
+export function statCodice(eventi, cards, oggi) {
+  const coppie = new Map(); // numero -> { parola, carte: { np, pn } }
+  for (const c of Object.values(cards)) {
+    const p = coppiaDaCarta(c);
+    if (!p) continue;
+    const x = coppie.get(p.numero) || { numero: p.numero, parola: p.parola, carte: {} };
+    x.carte[p.senso] = c.id;
+    if (p.senso === 'np') x.parola = p.parola;
+    coppie.set(p.numero, x);
+  }
+  const ultimo = new Map(), giornoDiE = (e) => romeDate(e.at);
+  const da7 = addDays(oggi, -6), da14 = addDays(oggi, -13);
+  const sette = [], quattordici = new Map(), provate = new Set();
+  for (const e of ordinaEventi(eventi)) {
+    if (e.t !== 'v' || e.k !== 'scrivi' || !cards[e.c]) continue;
+    const p = coppiaDaCarta(cards[e.c]);
+    if (!p) continue;
+    ultimo.set(e.c, e); provate.add(p.numero);
+    const g = giornoDiE(e);
+    if (e.g > 0 && Number.isFinite(e.ms) && g <= oggi) {
+      if (g >= da7) sette.push({ g, ms: e.ms, senso: p.senso });
+      if (g >= da14) { const l = quattordici.get(p.numero) || []; l.push(e.ms); quattordici.set(p.numero, l); }
+    }
+  }
+  const presa = (id) => { const e = id && ultimo.get(id); return !!e && e.g > 0 && Number.isFinite(e.ms) && e.ms <= LIMITE_MS; };
+  const fissata = (x) => !!(x.carte.np && x.carte.pn) && presa(x.carte.np) && presa(x.carte.pn);
+  const tutte = [...coppie.values()];
+  const decine = Array.from({ length: 10 }, (_, d) => {
+    const qui = tutte.filter((x) => x.numero.length === 2 && x.numero[0] === String(d));
+    return { da: `${d}0`, a: `${d}9`, tot: qui.length, fissate: qui.filter(fissata).length, iniziata: qui.some((x) => provate.has(x.numero)) };
+  });
+  // Tempo tipico: la mediana, così una pausa lunga (il telefono posato) non falsa il conto.
+  const media = (l) => { if (!l.length) return null; const o = [...l].sort((a, b) => a - b), m = o.length >> 1; return o.length % 2 ? o[m] : Math.round((o[m - 1] + o[m]) / 2); };
+  const perGiorno = Array.from({ length: 7 }, (_, i) => { const g = addDays(da7, i); return { giorno: g, ms: media(sette.filter((x) => x.g === g).map((x) => x.ms)) }; });
+  const lente = [...quattordici.entries()].map(([n, l]) => ({ numero: n, parola: coppie.get(n)?.parola || '', ms: media(l), volte: l.length }))
+    .filter((x) => x.volte >= 2 && x.ms > LIMITE_MS).sort((a, b) => b.ms - a.ms).slice(0, 5);
+  return {
+    parole: tutte.length, fissate: tutte.filter(fissata).length, decine,
+    iniziate: decine.filter((d) => d.iniziata).length,
+    medioMs: media(sette.map((x) => x.ms)), perGiorno,
+    perSenso: { np: media(sette.filter((x) => x.senso === 'np').map((x) => x.ms)), pn: media(sette.filter((x) => x.senso === 'pn').map((x) => x.ms)) },
+    lente,
+  };
+}
+
 // ---------- Rotta: costanza, lezioni e manuale ----------
 // Manuale EdiSES del concorso 622: 306 pagine in quattro libri.
 export const MANUALE = {
@@ -346,12 +399,19 @@ export function lezioni(eventi) {
     .sort((x, y) => (x.giorno < y.giorno ? 1 : x.giorno > y.giorno ? -1 : x.at < y.at ? 1 : -1));
 }
 
-// Cosa è successo in ogni giorno.
-export function attivitaGiorni(eventi) {
-  const m = new Map(), voce = (g) => { if (!m.has(g)) m.set(g, { sessioni: 0, risposte: 0, lezioni: 0 }); return m.get(g); };
+// Cosa è successo in ogni giorno. Conta solo lo studio delle materie: il codice fonetico si segna a parte e non fa catena.
+// opz.codice(idMazzo) dice se un mazzo è del codice; opz.mazzoDi(idCarta) trova il mazzo di una carta.
+export function attivitaGiorni(eventi, opz = {}) {
+  const codice = opz.codice || codicePerPrefisso, mazzoDi = opz.mazzoDi || ((id) => id);
+  const m = new Map(), voce = (g) => { if (!m.has(g)) m.set(g, { sessioni: 0, risposte: 0, lezioni: 0, codice: 0 }); return m.get(g); };
+  // Una sessione è di studio se almeno una risposta è su una carta delle materie. La simulazione lo è sempre.
+  const sessioneStudio = (e) => e.kind === 'sim' || (e.kind !== 'scrivi' && (e.answers || []).some((a) => !codice(mazzoDi(a.c) ?? a.c)));
   for (const e of eventi) {
-    if (e.t === 's') voce(romeDate(e.at)).sessioni++;
-    else if (e.t === 'v') voce(romeDate(e.at)).risposte++;
+    if (e.t === 's') { if (sessioneStudio(e)) voce(romeDate(e.at)).sessioni++; }
+    else if (e.t === 'v') {
+      if (codice(e.d ?? mazzoDi(e.c) ?? e.c)) voce(romeDate(e.at)).codice++;
+      else voce(romeDate(e.at)).risposte++;
+    }
   }
   for (const l of lezioni(eventi)) voce(l.giorno).lezioni++;
   return m;
@@ -359,11 +419,11 @@ export function attivitaGiorni(eventi) {
 // 0 niente, 1 giorno minimo, 2 giorno pieno (c'è una lezione).
 export const livelloGiorno = (g) => (!g ? 0 : g.lezioni > 0 ? 2 : g.sessioni > 0 || g.risposte >= RISPOSTE_GIORNO_MINIMO ? 1 : 0);
 
-export function catena(eventi, oggi, settimane = SETTIMANE_CATENA) {
-  const att = attivitaGiorni(eventi), liv = (g) => livelloGiorno(att.get(g));
+export function catena(eventi, oggi, settimane = SETTIMANE_CATENA, opz = {}) {
+  const att = attivitaGiorni(eventi, opz), liv = (g) => livelloGiorno(att.get(g));
   const fine = addDays(lunedi(oggi), 6), inizio = addDays(lunedi(oggi), -7 * (settimane - 1));
   const giorni = [];
-  for (let g = inizio; g <= fine; g = addDays(g, 1)) giorni.push({ giorno: g, livello: g > oggi ? 0 : liv(g), futuro: g > oggi, ...(att.get(g) || { sessioni: 0, risposte: 0, lezioni: 0 }) });
+  for (let g = inizio; g <= fine; g = addDays(g, 1)) giorni.push({ giorno: g, livello: g > oggi ? 0 : liv(g), futuro: g > oggi, ...(att.get(g) || { sessioni: 0, risposte: 0, lezioni: 0, codice: 0 }) });
   // La serie resta viva fino a stasera: se oggi non hai ancora fatto nulla, conta da ieri.
   let serie = 0;
   for (let g = liv(oggi) ? oggi : addDays(oggi, -1); liv(g); g = addDays(g, -1)) serie++;
@@ -372,12 +432,12 @@ export function catena(eventi, oggi, settimane = SETTIMANE_CATENA) {
     corsa = prec && daysBetween(prec, g) === 1 ? corsa + 1 : 1;
     record = Math.max(record, corsa); prec = g;
   }
-  return { giorni, serie, record, oggiFatto: liv(oggi) > 0, ieriFatto: liv(addDays(oggi, -1)) > 0, haStoria: att.size > 0 };
+  return { giorni, serie, record, oggiFatto: liv(oggi) > 0, ieriFatto: liv(addDays(oggi, -1)) > 0, haStoria: [...att.values()].some((v) => livelloGiorno(v)) };
 }
 
 // Regola dei due giorni: mai saltare due giorni di fila.
-export function regolaDueGiorni(eventi, oggi) {
-  const c = catena(eventi, oggi, 1);
+export function regolaDueGiorni(eventi, oggi, opz = {}) {
+  const c = catena(eventi, oggi, 1, opz);
   if (!c.haStoria || c.ieriFatto) return null;
   return c.oggiFatto ? 'salva' : 'minimo';
 }
@@ -398,17 +458,18 @@ export function avanzamentoManuale(lista) {
 }
 
 // Settimana da lunedì a domenica.
-export function riepilogoSettimana(eventi, oggi) {
+export function riepilogoSettimana(eventi, oggi, opz = {}) {
   const da = lunedi(oggi), a = addDays(da, 6), dentro = (g) => g >= da && g <= a;
-  const att = attivitaGiorni(eventi);
+  const att = attivitaGiorni(eventi, opz), codice = opz.codice || codicePerPrefisso, mazzoDi = opz.mazzoDi || ((id) => id);
+  const studio = eventi.filter((e) => e.t === 'v' && dentro(romeDate(e.at)) && !codice(e.d ?? mazzoDi(e.c) ?? e.c));
   let attivi = 0;
   for (let g = da; g <= a && g <= oggi; g = addDays(g, 1)) if (livelloGiorno(att.get(g))) attivi++;
   const sims = eventi.filter((e) => e.t === 's' && e.kind === 'sim').sort((x, y) => (x.at > y.at ? -1 : 1));
   return {
     da, a, attivi,
     lezioni: lezioni(eventi).filter((l) => dentro(l.giorno)).length,
-    carte: new Set(eventi.filter((e) => e.t === 'v' && dentro(romeDate(e.at))).map((e) => e.c)).size, // carte diverse, non risposte
-    risposte: eventi.filter((e) => e.t === 'v' && dentro(romeDate(e.at))).length,
+    carte: new Set(studio.map((e) => e.c)).size, // carte diverse delle materie, non risposte
+    risposte: studio.length,
     ultimaSim: sims[0] || null,
   };
 }

@@ -1,5 +1,5 @@
 // Fa funzionare l'app anche senza rete. Non tocca mai le chiamate a GitHub.
-const VERSIONE = 'pq-2026-11-08-1';
+const VERSIONE = 'pq-2026-11-11-1';
 const FILE = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/app.js', 'js/core.js', 'js/store.js', 'js/moto.js',

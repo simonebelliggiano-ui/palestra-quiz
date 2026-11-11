@@ -10,11 +10,22 @@
   --warn-mark: #C9781A; --bad-mark: #C2502B; --img: #7A3E9D; --img-bg: #F3EAFB;
   --glass: rgba(255,255,255,.78); --shadow: 0 8px 22px rgba(62,92,160,.08);
   --sa: env(safe-area-inset-top, 0px); --top: max(var(--sa), 12px); --bottom: env(safe-area-inset-bottom, 0px);
+  --fondo-alto: #6F95D6; --fondo-1: #A9C6EC; --fondo-2: #DCE8F7; --fondo-basso: #B9D0EF;
+}
+/* App installata sul telefono: all'avvio iOS a volte dà 0 come spazio della barra di stato.
+   Così il contenuto finiva sotto la Dynamic Island. Con un minimo il saluto resta sempre visibile. */
+@media (display-mode: standalone) and (pointer: coarse) {
+  :root { --sa: max(env(safe-area-inset-top, 0px), 50px); --bottom: max(env(safe-area-inset-bottom, 0px), 20px); }
+}
+/* Palestra del codice: stessa app, tinta viola, così si capisce sempre dove sei. */
+:root[data-palestra="codice"] {
+  --blue: #7A3E9D; --blue-ink: #6A2F8C; --blue-soft: #F3EAFB; --tile-blue: #7A3E9D;
+  --fondo-alto: #A57CC9; --fondo-1: #CDB6E6; --fondo-2: #EDE3F7; --fondo-basso: #DCCBEE;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; min-height: 100dvh; background: #F6F6F5; color: var(--ink); font-family: Manrope, system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
-body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(180deg, #6F95D6 0, #A9C6EC var(--sa), #DCE8F7 calc(var(--sa) + 120px), #F6F6F5 calc(var(--sa) + 260px), #F6F6F5 calc(100% - 212px), #DCE8F7 calc(100% - 82px), #B9D0EF 100%); }
+body { margin: 0; background: #F6F6F5; color: var(--ink); font-family: Manrope, system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
+body::before { content: ""; position: fixed; inset: 0 0 -160px; z-index: -1; transition: background .3s; background: linear-gradient(180deg, var(--fondo-alto) 0, var(--fondo-1) var(--sa), var(--fondo-2) calc(var(--sa) + 120px), #F6F6F5 calc(var(--sa) + 260px), #F6F6F5 calc(100% - 372px), var(--fondo-2) calc(100% - 242px), var(--fondo-basso) calc(100% - 160px), var(--fondo-basso) 100%); }
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 a { color: inherit; text-decoration: none; }
@@ -241,6 +252,30 @@ label.campo { display: flex; flex-direction: column; gap: 4px; font-size: 13px; 
 .lez .azione.piccola { flex: none; min-height: 40px; padding: 0 16px; }
 .tondo.piccolo { box-shadow: 0 2px 8px rgba(62,92,160,.14); }
 .settimana .tre { padding: 8px 0; border: 0; background: transparent; box-shadow: none; }
+
+/* Due palestre */
+.segmenti.palestra { background: rgba(255,255,255,.62); border: 1.5px solid #fff; box-shadow: var(--shadow); }
+.segmenti.palestra button { font-size: 15px; font-weight: 700; }
+.tile.viola { color: #6A2F8C; } .tile.viola b { color: #7A3E9D; }
+.decine { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 6px; }
+.decina { display: flex; flex-direction: column; gap: 4px; min-height: 58px; padding: 8px 4px 7px; border: 0; border-radius: 14px; background: #F7F2FC; text-align: center; }
+.decina b { font-size: 13px; line-height: 16px; font-weight: 800; color: var(--ink); }
+.decina small { font-size: 11px; line-height: 14px; font-weight: 700; color: var(--muted); }
+.decina i { display: block; height: 4px; margin: 0 4px; border-radius: 2px; background: #E9DDF4; overflow: hidden; }
+.decina i u { display: block; height: 100%; background: #7A3E9D; text-decoration: none; }
+.decina:active { scale: .95; }
+.tempi { position: relative; display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 8px; align-items: end; height: 96px; }
+.tempi span { display: block; border-radius: 6px 6px 3px 3px; background: #B996D4; }
+.tempi span.ok { background: #7A3E9D; }
+.tempi i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--warn-mark); pointer-events: none; }
+.tempi-giorni { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 8px; text-align: center; font-size: 11px; line-height: 14px; font-weight: 700; color: var(--muted); }
+.lenta { display: flex; align-items: center; gap: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.card > .riga + .lenta { border-top: 0; padding-top: 0; }
+.lenta b { width: 36px; font-size: 20px; line-height: 24px; font-weight: 800; color: #7A3E9D; }
+.lenta span { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; }
+.lenta em { font-style: normal; font-size: 14px; font-weight: 700; color: var(--warn); }
+.cella.cod { position: relative; }
+.cella.cod::after { content: ""; position: absolute; inset: 30%; border-radius: 50%; background: #7A3E9D; }
 
 #toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--top) + 6px); width: max-content; max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 22px; background: var(--ink); color: #fff; font-size: 14px; font-weight: 600; text-align: center; z-index: 30; opacity: 0; translate: 0 -14px; pointer-events: none; transition: opacity .2s, translate .36s var(--molla); }
 #toast.vedi { opacity: 1; translate: 0 0; }

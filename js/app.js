@@ -1,15 +1,15 @@
 // Palestra Quiz: schermate e azioni. La logica sta in core.js, i dati in store.js.
 import {
-  PRESETS, MATERIE, ORDINE_MATERIE, romeDate, materiaKey, preparaSimulazione, calcolaPunteggio, ricostruisci,
+  PRESETS, MATERIE, ORDINE_MATERIE, romeDate, daysBetween, materiaKey, preparaSimulazione, calcolaPunteggio, ricostruisci,
   inScadenza, maiVista, consolidata, prossimoRitorno, testoGiorni, ordinaQuiz, validaCarte, shuffle, fmt, fmtMin, mmss,
   normalizza, coppiaDaCarta, scegliScrittura, votoScrittura, paroleDifficili, LIMITE_MS,
   lezioni, catena, regolaDueGiorni, avanzamentoManuale, riepilogoSettimana, scadenze, quantoManca, validaLezione, lezioniDaJson,
-  SETTIMANE_CATENA, RISPOSTE_GIORNO_MINIMO,
+  SETTIMANE_CATENA, RISPOSTE_GIORNO_MINIMO, palestraDi, statCodice,
 } from './core.js';
 import { Archivio, kvGet, kvSet, kvDel } from './store.js';
 import { BarraLiquida, vibra, impostaVibrazioni, uscita, rimbalzo, contaFino, fermo } from './moto.js';
 
-const VERSIONE = '1.4';
+const VERSIONE = '1.5';
 const REPO_DEFAULT = 'simonebelliggiano-ui/palestra-quiz-dati';
 const NOME = 'Simone';
 
@@ -53,8 +53,17 @@ function ricalcola() {
   S.progress = progress; S.sessions = sessions;
 }
 const oggi = () => romeDate();
-const tutte = () => Object.values(S.cards);
-const deckList = () => Object.values(S.decks).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || String(a.name).localeCompare(b.name));
+// Due palestre: le materie del concorso e il codice fonetico. L'interruttore in alto sceglie quale vedere.
+const pal = () => (S.prefs.palestra === 'codice' ? 'codice' : 'materie');
+const palMazzo = (id) => palestraDi(S.decks[id] || { id });
+const opzRotta = () => ({ codice: (id) => palMazzo(id) === 'codice', mazzoDi: (cid) => S.cards[cid]?.deck });
+const palSessione = (s) => (s.kind === 'sim' ? 'materie' : s.kind === 'scrivi' ? 'codice' : palMazzo(S.cards[s.answers?.[0]?.c]?.deck ?? s.decks?.[0] ?? s.answers?.[0]?.c ?? ''));
+const tutteTutte = () => Object.values(S.cards);
+const tutte = () => tutteTutte().filter((c) => palMazzo(c.deck) === pal());
+const deckListTutti = () => Object.values(S.decks).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || String(a.name).localeCompare(b.name));
+const deckList = () => deckListTutti().filter((d) => palestraDi(d) === pal());
+// Mazzi scelti in passato che appartengono all'altra palestra non contano.
+const selPal = (k) => (S.prefs[k] || []).filter((id) => S.decks[id] && palMazzo(id) === pal());
 const deckMateria = () => Object.fromEntries(Object.values(S.decks).map((d) => [d.id, d.materia]));
 const nomeMateria = (m) => MATERIE[materiaKey(m)] || m || 'Altro';
 function materie() {
@@ -100,6 +109,9 @@ function route() {
     S.fx = a >= 0 && b >= 0 ? (b > a ? 'tab-d' : 'tab-s') : 'apri';
   }
   S.ui.vista = nome;
+  // Rotta e Gestione sono comuni; il resto prende il colore della palestra scelta.
+  const tinta = pal() === 'codice' && !['rotta', 'gestione'].includes(nome) ? 'codice' : 'materie';
+  if (document.documentElement.dataset.palestra !== tinta) document.documentElement.dataset.palestra = tinta;
   VISTE[nome]();
   barraNav.imposta(nome, principale);
   dopoRender();
@@ -157,40 +169,40 @@ function testaSessione(titolo, chiudi, perc) {
 const barra = (nome, destra, pct, colore) => `<div class="barra-riga"><div class="riga"><span>${esc(nome)}</span><span>${destra}</span></div><div class="barra"><i style="width:${Math.round(pct)}%${colore ? `;background:${colore}` : ''}"></i></div></div>`;
 const pulsanteSegmento = (azione, val, attivo, testo) => `<button data-a="${azione}" data-v="${esc(val)}" aria-pressed="${attivo}">${esc(testo)}</button>`;
 
+const selettorePalestra = () => `<div class="segmenti palestra" role="group" aria-label="Palestra">${pulsanteSegmento('palestra', 'materie', pal() === 'materie', 'Materie')}${pulsanteSegmento('palestra', 'codice', pal() === 'codice', 'Codice')}</div>`;
+const sec = (ms) => (ms == null ? '–' : `${(ms / 1000).toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`);
+
 // ---------- OGGI ----------
 VISTE.oggi = () => {
   if (S.run?.finished) { S.run = null; salvaRun(); }
+  if (pal() === 'codice') return oggiCodice();
   const d = oggi(), all = tutte();
   const dovute = all.filter((c) => inScadenza(c, S.progress, d)).length;
   const nuove = all.filter((c) => maiVista(c, S.progress)).length;
-  const sett = S.sessions.filter((s) => Date.now() - Date.parse(s.at) < 7 * 864e5);
+  const sett = S.sessions.filter((s) => palSessione(s) === 'materie' && Date.now() - Date.parse(s.at) < 7 * 864e5);
   const giuste = sett.reduce((a, s) => a + (s.right || 0), 0), tot = sett.reduce((a, s) => a + (s.total || 0), 0);
   const ultimaSim = S.sessions.find((s) => s.kind === 'sim');
-  const ora = Number(new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', hour: 'numeric', hour12: false }).format(new Date()));
-  const saluto = ora < 13 ? 'Buongiorno' : ora < 18 ? 'Buon pomeriggio' : 'Buonasera';
   const titolo = !all.length ? 'Palestra vuota' : dovute ? plur(dovute, 'carta da ripassare', 'carte da ripassare') : 'Niente da ripassare';
   const righe = materie().map((m) => {
     const cs = carteDi(mazziDi(m)), ok = cs.filter((c) => consolidata(c, S.progress)).length, du = cs.filter((c) => inScadenza(c, S.progress, d)).length;
     return barra(m, `${ok} su ${cs.length} · ${du} oggi`, cs.length ? (ok / cs.length) * 100 : 0);
   }).join('');
   const inCorso = S.run && !S.run.finished;
-  const nomiRun = { flash: 'il ripasso', quiz: 'il quiz', sim: 'la simulazione', scrivi: "l'allenamento" };
-  const haScrivi = all.some((c) => coppiaDaCarta(c));
-  const ev = A.eventi(), dueGiorni = regolaDueGiorni(ev, d);
+  const ev = A.eventi(), dueGiorni = regolaDueGiorni(ev, d, opzRotta());
   mostra(`
-    <div class="centro"><div class="saluto">${ic.cap}${saluto}, ${NOME}</div><h1>${titolo}</h1></div>
+    ${selettorePalestra()}
+    <div class="centro"><div class="saluto">${ic.cap}${saluto()}, ${NOME}</div><h1>${titolo}</h1></div>
     ${bannerSync()}
     ${dueGiorni === 'minimo' && !inCorso ? `<a class="minimo" href="#ripasso" data-a="giornoMinimo"><span><b>Oggi basta il giorno minimo: 10 minuti di ripasso</b><span>Ieri niente. Mai due giorni di fila: così la catena non si rompe.</span></span>${ic.dx('#2F4FAE')}</a>` : ''}
-    ${domenica(d) ? cartaSettimana(riepilogoSettimana(ev, d), 'La tua settimana') : ''}
-    ${inCorso ? `<a class="azione" href="#${S.run.view}">Riprendi ${nomiRun[S.run.kind]}</a>` : ''}
-    ${!A.collegato() ? `<div class="card"><h2>Collega i tuoi dati</h2><p class="piccolo">Carte e progressi stanno nel tuo repository privato. Basta farlo una volta per dispositivo.</p><a class="azione piccola" href="#gestione">Vai a Gestione</a></div>` : ''}
+    ${domenica(d) ? cartaSettimana(riepilogoSettimana(ev, d, opzRotta()), 'La tua settimana') : ''}
+    ${riprendi()}
+    ${collegaDati()}
     <div class="tile-griglia">
       <a class="tile blu" href="#ripasso"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="15" rx="3" fill="#2F8FD6" opacity=".45"/><rect x="8" y="3" width="13" height="15" rx="3" fill="#2F8FD6"/></svg><span><b>Ripasso</b><span class="num">${dovute} in scadenza</span></span></a>
       <a class="tile marrone" href="#quiz" data-a="tileQuiz" data-v="due"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#B85CD0"/><path d="M7.500 12.500l3 3 6-6.500" fill="none" stroke="#fff" stroke-width="2.400" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Quiz</b><span>con correzione subito</span></span></a>
       <a class="tile blu" href="#simulazione"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><rect x="9.500" y="1.500" width="5" height="3" rx="1.500" fill="#C9781A"/><circle cx="12" cy="14" r="9" fill="#C9781A"/><path d="M12 9v5l3 2" fill="none" stroke="#fff" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Simulazione</b><span class="num">${PRESETS.ade.n} domande in ${PRESETS.ade.min} min</span></span></a>
       <a class="tile marrone" href="#quiz" data-a="tileQuiz" data-v="weak"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#D4497A"/><circle cx="12" cy="12" r="5.500" fill="#fff"/><circle cx="12" cy="12" r="2.500" fill="#D4497A"/></svg><span><b>Errori</b><span>prima le più sbagliate</span></span></a>
     </div>
-    ${haScrivi ? `<a class="riga-azione" href="#scrivi"><span><b>Scrivi a memoria</b><span>Vedi il numero, scrivi la parola</span></span>${ic.dx()}</a>` : ''}
     <div class="tre">
       <div><b>${nuove}</b><small>mai viste</small></div>
       <div><b>${tot ? `${Math.round((giuste / tot) * 100)}%` : '–'}</b><small>giuste in 7 giorni</small></div>
@@ -199,6 +211,38 @@ VISTE.oggi = () => {
     ${righe ? `<section class="card"><h2>Carte consolidate, per materia</h2>${righe}</section>` : ''}
   `);
 };
+const saluto = () => { const ora = Number(new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', hour: 'numeric', hour12: false }).format(new Date())); return ora < 13 ? 'Buongiorno' : ora < 18 ? 'Buon pomeriggio' : 'Buonasera'; };
+const riprendi = () => { const nomi = { flash: 'il ripasso', quiz: 'il quiz', sim: 'la simulazione', scrivi: "l'allenamento" }; return S.run && !S.run.finished ? `<a class="azione" href="#${S.run.view}">Riprendi ${nomi[S.run.kind]}</a>` : ''; };
+const collegaDati = () => (!A.collegato() ? `<div class="card"><h2>Collega i tuoi dati</h2><p class="piccolo">Carte e progressi stanno nel tuo repository privato. Basta farlo una volta per dispositivo.</p><a class="azione piccola" href="#gestione">Vai a Gestione</a></div>` : '');
+// Oggi nella palestra del codice.
+function oggiCodice() {
+  const d = oggi(), all = tutte(), st = statCodice(A.eventi(), S.cards, d);
+  const dovute = all.filter((c) => inScadenza(c, S.progress, d)).length;
+  const titolo = !all.length ? 'Codice vuoto' : dovute ? plur(dovute, 'parola da ripassare', 'parole da ripassare') : 'Niente da ripassare';
+  const storie = deckList().find((x) => x.id === 'cf-storie');
+  const ico = (path) => `<svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#7A3E9D" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  mostra(`
+    ${selettorePalestra()}
+    <div class="centro"><div class="saluto">Codice fonetico</div><h1>${titolo}</h1></div>
+    ${bannerSync()}
+    ${riprendi()}
+    ${collegaDati()}
+    <div class="tile-griglia">
+      <a class="tile viola" href="#ripasso">${ico('<rect x="8" y="3" width="13" height="15" rx="3"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/>')}<span><b>Ripasso</b><span class="num">${dovute} in scadenza</span></span></a>
+      <a class="tile viola" href="#scrivi" data-a="scTutte">${ico('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13 7 4 4"/>')}<span><b>Scrivi a memoria</b><span>numero e parola, nei due sensi</span></span></a>
+      ${storie ? `<a class="tile viola" href="#ripasso" data-a="mazzoRipassa" data-v="cf-storie">${ico('<path d="M9 15 15 9"/><path d="M11 6l1.500-1.500a4 4 0 0 1 5.700 5.700L16.700 11.700M13 18l-1.500 1.500a4 4 0 0 1-5.700-5.700L7.300 12.300"/>')}<span><b>Storie a coppie</b><span>due parole, una scena</span></span></a>` : ''}
+      <a class="tile viola" href="#scrivi" data-a="scriviLente">${ico('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.500 2M10 2h4"/>')}<span><b>Le più lente</b><span class="num">${st.lente.length ? plur(st.lente.length, 'parola', 'parole') + ' sopra i 2 s' : 'nessuna sopra i 2 s'}</span></span></a>
+    </div>
+    <div class="tre">
+      <div><b class="num">${st.fissate}/${st.parole}</b><small>parole fissate</small></div>
+      <div><b class="num">${sec(st.medioMs)}</b><small>tempo tipico</small></div>
+      <div><b class="num">${st.iniziate}/10</b><small>decine iniziate</small></div>
+    </div>
+    <section class="card"><div class="riga"><h2>Le dieci decine</h2><span class="meta">parole fissate</span></div>
+      <div class="decine">${st.decine.map((x) => `<button class="decina" data-a="decina" data-v="${x.da[0]}" aria-label="Allena da ${x.da} a ${x.a}: ${x.fissate} fissate su ${x.tot}"><b class="num">${x.da}-${x.a}</b><small class="num">${x.fissate}/${x.tot}</small><i><u style="width:${x.tot ? Math.round((x.fissate / x.tot) * 100) : 0}%"></u></i></button>`).join('')}</div>
+      <p class="meta">Fissata vuol dire: l'ultima volta l'hai scritta giusta e in meno di 2 secondi, in tutti e due i sensi. Tocca una decina per allenarla.</p>
+    </section>`);
+}
 
 // ---------- MAZZI ----------
 VISTE.mazzi = () => {
@@ -212,14 +256,14 @@ VISTE.mazzi = () => {
       <div class="barra"><i style="width:${cs.length ? Math.round((ok / cs.length) * 100) : 0}%"></i></div>
       <div class="scorciatoie ${cs.some((c) => coppiaDaCarta(c)) ? 'tre-bottoni' : ''}"><button class="azione tenue piccola" data-a="mazzoRipassa" data-v="${esc(dk.id)}">Ripassa</button><button class="azione tenue piccola" data-a="mazzoQuiz" data-v="${esc(dk.id)}" ${q ? '' : 'disabled'}>Quiz</button>${cs.some((c) => coppiaDaCarta(c)) ? `<button class="azione tenue piccola" data-a="mazzoScrivi" data-v="${esc(dk.id)}">Scrivi</button>` : ''}</div></article>`;
   };
-  mostra(`<h1>Mazzi</h1><p class="sotto">${plur(tutte().length, 'carta', 'carte')}, un mazzo per argomento</p>
-    ${mat.length ? `<div class="chips scorre"><button class="chip" data-a="filtroMazzi" data-v="" aria-pressed="${!filtro}">Tutti</button>${mat.map((m) => `<button class="chip" data-a="filtroMazzi" data-v="${esc(m)}" aria-pressed="${filtro === m}">${esc(m)}</button>`).join('')}</div>` : ''}
+  mostra(`${selettorePalestra()}<h1>${pal() === 'codice' ? 'Mazzi del codice' : 'Mazzi'}</h1><p class="sotto">${plur(tutte().length, 'carta', 'carte')}, un mazzo per argomento</p>
+    ${mat.length > 1 ? `<div class="chips scorre"><button class="chip" data-a="filtroMazzi" data-v="" aria-pressed="${!filtro}">Tutti</button>${mat.map((m) => `<button class="chip" data-a="filtroMazzi" data-v="${esc(m)}" aria-pressed="${filtro === m}">${esc(m)}</button>`).join('')}</div>` : ''}
     ${(filtro ? [filtro] : mat).map((m) => `<h2 class="etichetta">${esc(m)}</h2>${deckList().filter((x) => nomeMateria(x.materia) === m).map(carta).join('')}`).join('') || '<div class="card vuoto">Ancora nessun mazzo. Le carte arrivano dalle lezioni con Claude.</div>'}`);
 };
 
 // ---------- scelta mazzi per ripasso e quiz ----------
 function sceltaMazzi(chiave, lista = deckList()) {
-  const sel = S.prefs[chiave] || [];
+  const sel = (S.prefs[chiave] || []).filter((id) => lista.some((d) => d.id === id));
   return `<h2 class="etichetta">Da quali mazzi</h2><div class="chips"><button class="chip" data-a="tuttiMazzi" data-v="${chiave}" aria-pressed="${!sel.length}">Tutti</button>${lista.map((d) => `<button class="chip" data-a="toggleMazzo" data-k="${chiave}" data-v="${esc(d.id)}" aria-pressed="${sel.includes(d.id)}">${esc(d.name)}</button>`).join('')}</div>`;
 }
 const stepper = (k, val, testo) => `<div class="card stepper"><h2>${testo}</h2><div><button class="tondo" data-a="passo" data-k="${k}" data-v="-5" aria-label="Meno 5"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3C4454" stroke-width="3" stroke-linecap="round"><path d="M5 12h14"/></svg></button><b>${val}</b><button class="tondo" data-a="passo" data-k="${k}" data-v="5" aria-label="Più 5"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3C4454" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div></div>`;
@@ -227,7 +271,7 @@ const stepper = (k, val, testo) => `<div class="card stepper"><h2>${testo}</h2><
 // ---------- RIPASSO ----------
 VISTE.ripasso = () => {
   if (S.run?.view === 'ripasso') return S.run.finished ? fineFlash() : schermoFlash();
-  const d = oggi(), sel = S.prefs.flDecks || [], pool = carteDi(sel.length ? sel : null);
+  const d = oggi(), sel = selPal('flDecks'), pool = carteDi(sel.length ? sel : null);
   const du = pool.filter((c) => inScadenza(c, S.progress, d)).length, nw = pool.filter((c) => maiVista(c, S.progress)).length;
   const modo = S.ui.flModo || (du || !nw ? 'due' : 'new');
   const n = S.prefs.flN || 30;
@@ -291,7 +335,7 @@ function fineFlash() {
 // ---------- QUIZ ----------
 VISTE.quiz = () => {
   if (S.run?.view === 'quiz') return S.run.finished ? fineQuiz() : schermoQuiz();
-  const sel = S.prefs.qzDecks || [], pool = carteDi(sel.length ? sel : null).filter((c) => c.kind === 'quiz');
+  const sel = selPal('qzDecks'), pool = carteDi(sel.length ? sel : null).filter((c) => c.kind === 'quiz');
   const modo = S.ui.qzModo || 'weak', n = S.prefs.qzN || 15;
   mostra(`${testaSessione('Quiz', 'home')}
     <h1>Allenamento con correzione</h1>
@@ -339,8 +383,8 @@ VISTE.simulazione = () => {
   if (S.run?.view === 'simulazione') return S.run.finished ? (S.run.correzione ? correzioneSim() : esitoSim()) : prova();
   const pk = PRESETS[S.prefs.simPreset] ? S.prefs.simPreset : 'ade', p = PRESETS[pk];
   const sel = (S.prefs.simGruppi || {})[pk] || [];
-  const anteprima = preparaSimulazione(pk, tutte(), deckMateria(), sel.length ? sel : null);
-  const avvisi = !tutte().length ? ['Nessuna carta: collega il repository in Gestione.'] : !anteprima.queue.length ? ['Nessuna domanda a scelta multipla per questa scelta.'] : anteprima.avvisi;
+  const anteprima = preparaSimulazione(pk, tutteTutte(), deckMateria(), sel.length ? sel : null);
+  const avvisi = !tutteTutte().length ? ['Nessuna carta: collega il repository in Gestione.'] : !anteprima.queue.length ? ['Nessuna domanda a scelta multipla per questa scelta.'] : anteprima.avvisi;
   mostra(`${testaSessione('Simulazione', 'home')}
     <div><h1>Come il giorno della prova</h1><p class="sotto">Tempo fisso. Il risultato lo vedi solo alla fine.</p></div>
     <div role="radiogroup" aria-label="Formato" style="display:flex;flex-direction:column;gap:8px">
@@ -484,21 +528,23 @@ async function copia(testo, msg) {
 }
 
 // ---------- SCRIVI A MEMORIA ----------
-const mazziScrittura = () => { const ids = new Set(tutte().filter((c) => coppiaDaCarta(c)).map((c) => c.deck)); return deckList().filter((d) => ids.has(d.id)); };
+const mazziScrittura = () => { const ids = new Set(tutteTutte().filter((c) => coppiaDaCarta(c)).map((c) => c.deck)); return deckListTutti().filter((d) => ids.has(d.id)); };
+const carteScrittura = (ids) => tutteTutte().filter((c) => ids.includes(c.deck));
 VISTE.scrivi = () => {
   if (S.run?.view === 'scrivi') return S.run.finished ? fineScrivi() : schermoScrivi();
   const senso = S.prefs.scSenso || 'np', n = S.prefs.scN || 20, conTempo = !!S.prefs.scTempo;
   const lista = mazziScrittura(), sel = (S.prefs.scDecks || []).filter((id) => lista.some((d) => d.id === id));
-  const pool = scegliScrittura(carteDi(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), 1e6);
+  const solo = S.ui.scSolo;
+  const pool = solo ? tutteTutte().filter((c) => solo.includes(c.id)) : scegliScrittura(carteScrittura(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), 1e6);
   const dure = paroleDifficili(A.eventi(), S.cards);
   mostra(`${testaSessione('Scrivi a memoria', 'home')}
     <h1>La scrivi, ti entra</h1>
     <p class="sotto">Se sbagli vedi la risposta e la riscrivi. L'app corregge da sola.</p>
     <div class="segmenti" role="group" aria-label="Senso">${pulsanteSegmento('scSenso', 'np', senso === 'np', 'Numero → parola')}${pulsanteSegmento('scSenso', 'pn', senso === 'pn', 'Parola → numero')}${pulsanteSegmento('scSenso', 'misto', senso === 'misto', 'Misto')}</div>
-    ${stepper('scN', n, 'Quante')}
+    ${solo ? `<div class="avviso">${ic.att}<span>Solo ${plur(solo.length, 'carta scelta', 'carte scelte')}, nei due sensi. <button class="link-piccolo" data-a="scTutte">Torna a tutte</button></span></div>` : stepper('scN', n, 'Quante')}
     <section class="card elenco"><button class="voce" role="switch" aria-checked="${conTempo}" data-a="scTempo"><span>Con il tempo<br><span class="meta">Barra di 2 secondi fino alla prima lettera</span></span><span class="interruttore" aria-hidden="true"><i></i></span></button></section>
     ${dure.length ? `<div class="avviso">${ic.att}<span>Da valutare nel rodaggio, sbagliate o esitate più di 3 volte: ${dure.slice(0, 8).map((d) => `${esc(d.numero)} ${esc(d.parola)}`).join(', ')}.</span></div>` : ''}
-    ${sceltaMazzi('scDecks', lista)}
+    ${solo ? '' : sceltaMazzi('scDecks', lista)}
     <div class="piede"><button class="azione" data-a="iniziaScrivi" ${pool.length ? '' : 'disabled'}>${pool.length ? 'Inizia' : 'Nessuna carta disponibile'}</button></div>`);
 };
 const SC = { t0: 0, t1: 0, rifai: false, fermo: false };
@@ -646,10 +692,12 @@ function grafico(sims, p) {
     ${punti}<text x="${xs}" y="${ly}" text-anchor="${anc}" font-size="14" font-weight="800" fill="#15181E">${fmt(ultime[sel].score)}</text>${etic}</svg>`;
 }
 VISTE.risultati = () => {
+  if (pal() === 'codice') return risultatiCodice();
+  const sessioni = S.sessions.filter((s) => palSessione(s) === 'materie');
   const pk = S.ui.risPreset || 'ade', p = PRESETS[pk];
   const sims = S.sessions.filter((s) => s.kind === 'sim' && s.preset === pk);
   const perMazzo = {};
-  S.sessions.forEach((s) => (s.answers || []).forEach((a) => {
+  sessioni.forEach((s) => (s.answers || []).forEach((a) => {
     const d = S.cards[a.c]?.deck;
     if (!d) return;
     perMazzo[d] ||= { t: 0, r: 0 }; perMazzo[d].t++; if (a.ok) perMazzo[d].r++;
@@ -659,15 +707,46 @@ VISTE.risultati = () => {
   const fregano = tutte().map((c) => ({ c, s: S.progress[c.id] })).filter((x) => x.s?.lapses > 0).sort((a, b) => b.s.lapses - a.s.lapses || a.s.box - b.s.box).slice(0, 15);
   const nomi = { flash: 'Ripasso', quiz: 'Quiz', sim: 'Simulazione', scrivi: 'Scrivi a memoria' };
   const quando = (at) => new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', dateStyle: 'short', timeStyle: 'short' }).format(new Date(at));
-  mostra(`<h1>Risultati</h1>
+  mostra(`${selettorePalestra()}<h1>Risultati</h1>
     <div class="segmenti" role="group" aria-label="Concorso">${pulsanteSegmento('risPreset', 'ade', pk === 'ade', 'Agenzia Entrate')}${pulsanteSegmento('risPreset', 'asmel', pk === 'asmel', 'ASMEL')}</div>
     <section class="card" style="gap:6px"><div class="riga"><h2>Andamento simulazioni</h2><span class="meta num">${sims.length ? `ultime ${Math.min(sims.length, 12)}, su ${p.max}` : ''}</span></div>${grafico(sims, p)}</section>
     <section class="card"><h2>Dove sbagli di più</h2>${righe.length ? righe.map((x) => barra(deckName(x.d), `<b style="color:var(--ink)">${Math.round(x.pct * 100)}%</b>`, x.pct * 100, colore(x.pct))).join('') : '<p class="piccolo">Ancora nessuna risposta registrata.</p>'}</section>
     <section class="card"><h2>Le carte che ti fregano</h2>
       ${fregano.length ? fregano.map(({ c, s }) => `<div class="tra"><div style="min-width:0"><div style="font-size:14px;line-height:19px;font-weight:600;overflow-wrap:anywhere">${esc(c.front)}</div><div class="meta">${esc(c.kind === 'quiz' ? c.options?.[c.answer] : c.back)}${c.ref ? ` · ${esc(c.ref)}` : ''}</div></div><span class="pill bad" style="flex:none">${plur(s.lapses, 'errore', 'errori')}</span></div>`).join('') + '<button class="azione tenue piccola" data-a="copiaFregano">Copia queste carte per Claude</button>' : '<p class="piccolo">Nessun errore registrato.</p>'}
     </section>
-    <section class="card" style="gap:0"><h2 style="padding-bottom:6px">Tutte le sessioni</h2>${S.sessions.length ? `<div class="tabella">${S.sessions.slice(0, 40).map((s) => `<div><span>${esc(nomi[s.kind] || s.kind)}${s.kind === 'sim' ? ` ${esc(PRESETS[s.preset]?.label || '')}` : ''}<br><span class="meta">${quando(s.at)} · ${mmss(s.dur || 0)}</span></span><span></span><span>${s.kind === 'sim' ? `${fmt(s.score)}/${s.max}` : `${s.right}/${s.total}`}</span></div>`).join('')}</div>` : '<p class="piccolo">Nessuna sessione.</p>'}</section>`);
+    <section class="card" style="gap:0"><h2 style="padding-bottom:6px">Tutte le sessioni</h2>${sessioni.length ? `<div class="tabella">${sessioni.slice(0, 40).map((s) => `<div><span>${esc(nomi[s.kind] || s.kind)}${s.kind === 'sim' ? ` ${esc(PRESETS[s.preset]?.label || '')}` : ''}<br><span class="meta">${quando(s.at)} · ${mmss(s.dur || 0)}</span></span><span></span><span>${s.kind === 'sim' ? `${fmt(s.score)}/${s.max}` : `${s.right}/${s.total}`}</span></div>`).join('')}</div>` : '<p class="piccolo">Nessuna sessione.</p>'}</section>`);
 };
+
+const tabellaSessioni = (sessioni) => {
+  const nomi = { flash: 'Ripasso', quiz: 'Quiz', sim: 'Simulazione', scrivi: 'Scrivi a memoria' };
+  const quando = (at) => new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', dateStyle: 'short', timeStyle: 'short' }).format(new Date(at));
+  return `<section class="card" style="gap:0"><h2 style="padding-bottom:6px">Tutte le sessioni</h2>${sessioni.length ? `<div class="tabella">${sessioni.slice(0, 40).map((s) => `<div><span>${esc(nomi[s.kind] || s.kind)}<br><span class="meta">${quando(s.at)} · ${mmss(s.dur || 0)}</span></span><span></span><span>${s.right}/${s.total}</span></div>`).join('')}</div>` : '<p class="piccolo">Nessuna sessione.</p>'}</section>`;
+};
+// Risultati nella palestra del codice: velocità, i due sensi, le parole più lente.
+function risultatiCodice() {
+  const d = oggi(), st = statCodice(A.eventi(), S.cards, d);
+  const sett = A.eventi().filter((e) => e.t === 'v' && palMazzo(e.d) === 'codice' && daysBetween(romeDate(e.at), d) < 7);
+  const giuste = sett.filter((e) => e.g > 0).length;
+  const tetto = 4000, alt = (ms) => (ms == null ? 0 : Math.max(4, Math.min(100, (ms / tetto) * 100)));
+  const giorniBrevi = new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC', weekday: 'short' });
+  const barreSenso = [['Numero → parola', st.perSenso.np], ['Parola → numero', st.perSenso.pn]];
+  mostra(`${selettorePalestra()}<h1>Risultati del codice</h1>
+    <div class="tre">
+      <div><b class="num">${sec(st.medioMs)}</b><small>tempo tipico</small></div>
+      <div><b class="num">${st.fissate}/${st.parole}</b><small>parole fissate</small></div>
+      <div><b class="num">${sett.length ? `${Math.round((giuste / sett.length) * 100)}%` : '–'}</b><small>giuste in 7 giorni</small></div>
+    </div>
+    <section class="card"><div class="riga"><h2>Tempo tipico, ultimi 7 giorni</h2><span class="meta">linea a 2 s</span></div>
+      <div class="tempi" role="img" aria-label="Tempo medio per giorno in Scrivi a memoria">${st.perGiorno.map((g) => `<span class="${g.ms != null && g.ms <= LIMITE_MS ? 'ok' : ''}" style="height:${alt(g.ms)}%"></span>`).join('')}<i style="bottom:${(LIMITE_MS / tetto) * 100}%"></i></div>
+      <div class="tempi-giorni">${st.perGiorno.map((g) => `<span>${giorniBrevi.format(dataUtc(g.giorno)).replace('.', '')}</span>`).join('')}</div>
+      <p class="meta">Conta solo Scrivi a memoria, risposte giuste: il tempo fino alla prima lettera. È il valore di mezzo, così una pausa lunga non falsa il conto.</p>
+    </section>
+    <section class="card"><h2>Nei due sensi</h2>${barreSenso.map(([n, ms]) => barra(n, sec(ms), alt(ms))).join('')}</section>
+    <section class="card"><div class="riga"><h2>Le più lente</h2><span class="meta">ultimi 14 giorni</span></div>
+      ${st.lente.length ? st.lente.map((x) => `<div class="lenta"><b class="num">${esc(x.numero)}</b><span>${esc(x.parola)}</span><em class="num">${sec(x.ms)}</em></div>`).join('') + '<button class="azione tenue piccola" data-a="scriviLente">Allenale adesso</button>' : '<p class="piccolo">Nessuna parola sopra i 2 secondi.</p>'}
+    </section>
+    ${tabellaSessioni(S.sessions.filter((s) => palSessione(s) === 'codice'))}`);
+}
 
 // ---------- ROTTA ----------
 const dataUtc = (ymd) => new Date(`${ymd}T12:00:00Z`);
@@ -692,14 +771,14 @@ function griglia(c, d) {
   const inizia = (w) => w.find((g) => g.giorno.endsWith('-01'));
   // La prima colonna prende il nome del suo mese solo se il mese dopo non comincia subito accanto.
   const mesi = settimane.map((w, i) => { const p = inizia(w) || (i === 0 && !settimane.slice(1, 3).some(inizia) ? w[0] : null); return `<span>${p ? fmtMeseBreve.format(dataUtc(p.giorno)).replace('.', '') : ''}</span>`; }).join('');
-  const celle = c.giorni.map((g) => `<span class="cella l${g.livello}${g.futuro ? ' futuro' : ''}${g.giorno === d ? ' oggi' : ''}${g.giorno === sel ? ' scelta' : ''}" ${g.futuro ? '' : `data-a="giorno" data-v="${g.giorno}"`}></span>`).join('');
+  const celle = c.giorni.map((g) => `<span class="cella l${g.livello}${!g.livello && g.codice && !g.futuro ? ' cod' : ''}${g.futuro ? ' futuro' : ''}${g.giorno === d ? ' oggi' : ''}${g.giorno === sel ? ' scelta' : ''}" ${g.futuro ? '' : `data-a="giorno" data-v="${g.giorno}"`}></span>`).join('');
   const attivi = c.giorni.filter((g) => g.livello).length;
   const g = c.giorni.find((x) => x.giorno === sel);
-  const parti = [g.sessioni && plur(g.sessioni, 'sessione', 'sessioni'), g.risposte && plur(g.risposte, 'risposta', 'risposte'), g.lezioni && plur(g.lezioni, 'lezione', 'lezioni')].filter(Boolean);
-  const stato = g.livello === 2 ? 'giorno pieno' : g.livello === 1 ? 'giorno minimo' : g.giorno === d ? 'ancora niente' : 'nessuna attività';
+  const parti = [g.sessioni && plur(g.sessioni, 'sessione', 'sessioni'), g.risposte && plur(g.risposte, 'risposta', 'risposte'), g.lezioni && plur(g.lezioni, 'lezione', 'lezioni'), g.codice && `${g.codice} di codice`].filter(Boolean);
+  const stato = g.livello === 2 ? 'giorno pieno' : g.livello === 1 ? 'giorno minimo' : g.codice ? 'solo codice, non conta per la catena' : g.giorno === d ? 'ancora niente' : 'nessuna attività';
   return `<div class="catena-mesi" aria-hidden="true"><span></span>${mesi}</div>
     <div class="catena" role="img" aria-label="Ultime ${SETTIMANE_CATENA} settimane: ${attivi} giorni attivi"><span>L</span><span></span><span>M</span><span></span><span>V</span><span></span><span>D</span>${celle}</div>
-    <div class="legenda" aria-hidden="true"><span><i class="cella l0"></i>niente</span><span><i class="cella l1"></i>giorno minimo</span><span><i class="cella l2"></i>con lezione</span></div>
+    <div class="legenda" aria-hidden="true"><span><i class="cella l0"></i>niente</span><span><i class="cella l0 cod"></i>solo codice, non conta</span><span><i class="cella l1"></i>giorno minimo</span><span><i class="cella l2"></i>con lezione</span></div>
     <p class="piccolo giorno-scelto"><b>${giornoLungo(sel)}</b>: ${stato}${parti.length ? ` · ${parti.join(', ')}` : ''}</p>`;
 }
 function cartaScadenza(s, d) {
@@ -712,16 +791,16 @@ function cartaScadenza(s, d) {
     : `<button class="link-piccolo" data-a="modScadenza" data-v="${esc(s.chiave)}">${s.data ? 'Cambia la data' : 'Imposta la data'}</button>`}</div>`;
 }
 VISTE.rotta = () => {
-  const d = oggi(), ev = A.eventi(), c = catena(ev, d), lista = lezioni(ev), man = avanzamentoManuale(lista), r = riepilogoSettimana(ev, d);
-  const due = regolaDueGiorni(ev, d), form = S.ui.formLezione;
+  const d = oggi(), ev = A.eventi(), o = opzRotta(), c = catena(ev, d, SETTIMANE_CATENA, o), lista = lezioni(ev), man = avanzamentoManuale(lista), r = riepilogoSettimana(ev, d, o);
+  const due = regolaDueGiorni(ev, d, o), form = S.ui.formLezione;
   const pct = (a, b) => (b ? (a / b) * 100 : 0);
-  mostra(`<h1>Rotta</h1><p class="sotto">Un giorno alla volta, senza saltarne due</p>
+  mostra(`<h1>Rotta</h1><p class="sotto">Conta solo lo studio delle materie</p>
     ${bannerSync()}
     ${due === 'minimo' ? `<a class="minimo" href="#ripasso" data-a="giornoMinimo"><span><b>Oggi basta il giorno minimo: 10 minuti di ripasso</b><span>Ieri niente. Mai due giorni di fila.</span></span>${ic.dx('#2F4FAE')}</a>` : ''}
     ${due === 'salva' ? `<div class="avviso ok">${ic.ok(16)}<span>Catena salva: ieri niente, ma oggi il giorno minimo è fatto.</span></div>` : ''}
     <div class="tre"><div><b class="num">${c.serie}</b><small>serie attuale</small></div><div><b class="num">${c.record}</b><small>record</small></div><div><b class="num">${r.attivi}/7</b><small>questa settimana</small></div></div>
     <section class="card"><div class="riga"><h2>Catena dei giorni</h2><span class="meta">${SETTIMANE_CATENA} settimane</span></div>${griglia(c, d)}
-      <p class="meta">Un giorno conta se chiudi una sessione o dai ${RISPOSTE_GIORNO_MINIMO} risposte. Con una lezione segnata diventa pieno.</p></section>
+      <p class="meta">Un giorno conta se chiudi una sessione di Materie o dai ${RISPOSTE_GIORNO_MINIMO} risposte di Materie. Con una lezione segnata diventa pieno. Il codice fonetico si allena a parte.</p></section>
     ${form ? `<section class="card lezione-form"><h2>Lezione fatta</h2>
       <label class="campo">Argomento<input id="lz-arg" type="text" maxlength="200" autocomplete="off" placeholder="Es. L. 241/1990, responsabile del procedimento" value="${esc(form.arg || '')}"></label>
       <label class="campo">Giorno<input id="lz-giorno" type="date" max="${d}" value="${esc(form.giorno || d)}"></label>
@@ -780,7 +859,7 @@ function fa(iso) {
   return new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso));
 }
 VISTE.gestione = () => {
-  const ap = S.ui.aperto, opzioniMazzi = deckList().map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+  const ap = S.ui.aperto, opzioniMazzi = deckListTutti().map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
   const blocco = (id, titolo, rosso, corpo) => `<button class="voce ${rosso ? 'rosso' : ''}" data-a="apri" data-v="${id}" aria-expanded="${ap === id}">${titolo}${ic.dx(rosso ? '#A8401F' : '#565D6B')}</button>${ap === id ? `<div class="aperto">${corpo}</div>` : ''}`;
   mostra(`<h1>Gestione</h1>
     <section class="card" style="gap:12px;padding:16px">
@@ -789,7 +868,7 @@ VISTE.gestione = () => {
       <div class="piccolo" style="display:flex;flex-direction:column;gap:4px">
         <div class="riga"><span>Ultimo salvataggio</span><b style="color:var(--ink)">${fa(A.stato.quando)}</b></div>
         <div class="riga"><span>In attesa di invio</span><b style="color:var(--ink)" class="num">${plur(A.pending.length, 'risposta', 'risposte')}</b></div>
-        <div class="riga"><span>Carte nel repository</span><b style="color:var(--ink)" class="num">${tutte().length}</b></div>
+        <div class="riga"><span>Carte nel repository</span><b style="color:var(--ink)" class="num">${tutteTutte().length}</b></div>
         <div class="riga"><span>Questo dispositivo</span><b style="color:var(--ink)">${esc(A.device || '')}</b></div>
       </div>
       <label class="campo">Repository privato<input id="g-repo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(A.cfg?.repo || REPO_DEFAULT)}"></label>
@@ -808,7 +887,7 @@ VISTE.gestione = () => {
 };
 function datiEsportati() {
   const { progress, sessions } = ricostruisci(A.eventi());
-  return { exportedAt: new Date().toISOString(), decks: Object.values(S.decks), cards: tutte(), progress, sessions, events: A.eventi() };
+  return { exportedAt: new Date().toISOString(), decks: Object.values(S.decks), cards: tutteTutte(), progress, sessions, events: A.eventi() };
 }
 async function importaDati(data) {
   // Ripristino di un backup: progressi e sessioni diventano eventi del registro.
@@ -829,7 +908,7 @@ async function importaDati(data) {
   const ids = new Set([...decks.map((d) => d.id), ...cards.map((c) => c.deck)]);
   for (const id of ids) {
     const deck = decks.find((d) => d.id === id) || S.decks[id];
-    const base = new Map(tutte().filter((c) => c.deck === id).map((c) => [c.id, c]));
+    const base = new Map(tutteTutte().filter((c) => c.deck === id).map((c) => [c.id, c]));
     for (const c of cards) if (c.deck === id) base.set(c.id, { ...c, created: base.get(c.id)?.created || c.created || new Date().toISOString() });
     await A.scriviMazzo({ id: deck.id, name: deck.name, materia: deck.materia || 'Altro', desc: deck.desc || '', order: deck.order ?? 999 }, [...base.values()]);
   }
@@ -851,9 +930,11 @@ const AZ = {
   scTempo() { S.prefs.scTempo = !S.prefs.scTempo; salvaPrefs(); route(); },
   iniziaScrivi() {
     const senso = S.prefs.scSenso || 'np', lista = mazziScrittura(), sel = (S.prefs.scDecks || []).filter((id) => lista.some((d) => d.id === id));
-    const scelte = scegliScrittura(carteDi(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), S.prefs.scN || 20);
+    const solo = S.ui.scSolo;
+    const scelte = solo ? shuffle(tutteTutte().filter((c) => solo.includes(c.id))) : scegliScrittura(carteScrittura(sel.length ? sel : lista.map((d) => d.id)), senso, S.progress, oggi(), S.prefs.scN || 20);
     if (!scelte.length) { toast('Nessuna carta per questa scelta'); return; }
-    S.run = { view: 'scrivi', kind: 'scrivi', senso, conTempo: !!S.prefs.scTempo, queue: scelte.map((c) => c.id), i: 0, answers: [], fatte: {}, started: Date.now(), decks: sel, finished: false };
+    S.ui.scSolo = null;
+    S.run = { view: 'scrivi', kind: 'scrivi', senso: solo ? 'misto' : senso, conTempo: !!S.prefs.scTempo, queue: scelte.map((c) => c.id), i: 0, answers: [], fatte: {}, started: Date.now(), decks: sel, finished: false };
     salvaRun(); route();
   },
   scControlla() {
@@ -878,7 +959,7 @@ const AZ = {
   flModo(el) { S.ui.flModo = el.dataset.v; route(); },
   qzModo(el) { S.ui.qzModo = el.dataset.v; route(); },
   iniziaFlash(el) {
-    const modo = el.dataset.v, sel = S.prefs.flDecks || [], d = oggi();
+    const modo = el.dataset.v, sel = selPal('flDecks'), d = oggi();
     let pool = carteDi(sel.length ? sel : null);
     if (modo === 'due') pool = pool.filter((c) => inScadenza(c, S.progress, d));
     if (modo === 'new') pool = pool.filter((c) => maiVista(c, S.progress));
@@ -914,7 +995,7 @@ const AZ = {
   fermaFlash() { S.run.queue = S.run.queue.slice(0, S.run.i); fineFlash(); },
   chiudiRun() { S.run = null; salvaRun(); clearInterval(S.tick); vai('oggi'); },
   iniziaQuiz() {
-    const sel = S.prefs.qzDecks || [], modo = S.ui.qzModo || 'weak';
+    const sel = selPal('qzDecks'), modo = S.ui.qzModo || 'weak';
     const pool = carteDi(sel.length ? sel : null).filter((c) => c.kind === 'quiz');
     S.run = { view: 'quiz', kind: 'quiz', queue: ordinaQuiz(pool, S.progress, oggi(), modo).slice(0, S.prefs.qzN || 15).map((c) => c.id), i: 0, pick: null, answers: [], started: Date.now(), decks: sel, finished: false };
     salvaRun(); route();
@@ -944,7 +1025,7 @@ const AZ = {
   },
   avviaSim() {
     const k = S.prefs.simPreset || 'ade', p = PRESETS[k], sel = (S.prefs.simGruppi || {})[k] || [];
-    const prep = preparaSimulazione(k, tutte(), deckMateria(), sel.length ? sel : null);
+    const prep = preparaSimulazione(k, tutteTutte(), deckMateria(), sel.length ? sel : null);
     if (!prep.queue.length) { toast('Nessuna domanda per questa scelta'); return; }
     const now = Date.now();
     S.run = { view: 'simulazione', kind: 'sim', preset: k, p, queue: prep.queue, i: 0, picks: {}, flags: {}, started: now, ends: now + p.min * 60000, avvisi: prep.avvisi, incompleta: prep.incompleta, finished: false, sheet: false };
@@ -987,6 +1068,19 @@ const AZ = {
     copia(testoErrori(sbagliate, r.results), 'Copiato: incollalo nella chat di correzione');
   },
   nulla() {},
+  palestra(el) { if (S.prefs.palestra === el.dataset.v) return; S.prefs.palestra = el.dataset.v; S.ui.filtroMazzi = null; salvaPrefs(); route(); },
+  decina(el) {
+    const ids = tutteTutte().filter((c) => { const p = coppiaDaCarta(c); return p && p.numero.length === 2 && p.numero[0] === el.dataset.v; }).map((c) => c.id);
+    if (!ids.length) { toast('Nessuna parola in questa decina'); return; }
+    S.ui.scSolo = ids; vai('scrivi');
+  },
+  scriviLente() {
+    const st = statCodice(A.eventi(), S.cards, oggi()), numeri = new Set(st.lente.map((x) => x.numero));
+    const ids = tutteTutte().filter((c) => { const p = coppiaDaCarta(c); return p && numeri.has(p.numero); }).map((c) => c.id);
+    if (!ids.length) { S.ui.scSolo = null; toast('Nessuna parola sopra i 2 secondi'); return; }
+    S.ui.scSolo = ids; vai('scrivi');
+  },
+  scTutte() { S.ui.scSolo = null; if (S.ui.vista === 'scrivi') route(); },
   giornoMinimo() { S.ui.flModo = null; },
   giorno(el) { S.ui.giornoSel = el.dataset.v; route(); },
   apriLezione() { S.ui.formLezione = { giorno: oggi() }; route(); document.getElementById('lz-arg')?.focus({ preventScroll: true }); },
@@ -1129,7 +1223,14 @@ A.onChange = (cambiato) => {
   if (S.run && S.run.view === 'simulazione' && !S.run.finished) avviaTick();
   // Si ascolta l'indirizzo solo a dati caricati: prima, un ridisegno cancellerebbe quello che stai scrivendo.
   window.addEventListener('hashchange', route);
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   route();
+  // All'apertura dall'icona iOS può partire con la pagina spostata e uno spazio vuoto sotto.
+  // Nei primi istanti, appena le misure si assestano, la pagina torna in cima. Dopo non tocca più nulla.
+  const avvio = Date.now(), inCima = () => { if (Date.now() - avvio < 2500 && window.scrollY !== 0) window.scrollTo(0, 0); };
+  requestAnimationFrame(() => requestAnimationFrame(inCima));
+  window.addEventListener('pageshow', inCima);
+  window.visualViewport?.addEventListener('resize', inCima);
   if (A.collegato() && navigator.onLine) A.sincronizza();
   document.addEventListener('visibilitychange', () => {
     // Al ritorno scarica le novità; quando l'app va in secondo piano prova a inviare quello che ha.
