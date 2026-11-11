@@ -1224,6 +1224,8 @@ A.onChange = (cambiato) => {
   // Si ascolta l'indirizzo solo a dati caricati: prima, un ridisegno cancellerebbe quello che stai scrivendo.
   window.addEventListener('hashchange', route);
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  // Altezza vera dello schermo (su iPhone resta quella in verticale): serve alla regola del CSS per iOS 26.
+  document.documentElement.style.setProperty('--schermo', `${Math.max(screen.height || 0, window.innerHeight)}px`);
   route();
   // All'apertura dall'icona iOS può partire con la pagina spostata e uno spazio vuoto sotto.
   // Nei primi istanti, appena le misure si assestano, la pagina torna in cima. Dopo non tocca più nulla.

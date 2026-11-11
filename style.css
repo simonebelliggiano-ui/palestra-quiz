@@ -16,6 +16,9 @@
    Così il contenuto finiva sotto la Dynamic Island. Con un minimo il saluto resta sempre visibile. */
 @media (display-mode: standalone) and (pointer: coarse) {
   :root { --sa: max(env(safe-area-inset-top, 0px), 50px); --bottom: max(env(safe-area-inset-bottom, 0px), 20px); }
+  /* iOS 26: se la pagina è più corta dello schermo, l'app installata riceve un'altezza ridotta e la barra resta sollevata.
+     Una pagina sempre un pixel più alta dello schermo fa usare a iOS lo schermo intero, come succede già in Rotta. */
+  body { min-height: calc(var(--schermo, 100vh) + 1px); }
 }
 /* Palestra del codice: stessa app, tinta viola, così si capisce sempre dove sei. */
 :root[data-palestra="codice"] {
